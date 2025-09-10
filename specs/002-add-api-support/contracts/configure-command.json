@@ -1,0 +1,76 @@
+{
+  "contract": "CLI Configure Command",
+  "version": "1.0.0",
+  "description": "Contract for the bananagen configure command for API provider setup",
+  "command": "bananagen configure",
+  "options": {
+    "provider": {
+      "type": "string",
+      "description": "Provider to configure",
+      "enum": ["openrouter", "requesty"],
+      "required": true
+    },
+    "interactive": {
+      "type": "boolean",
+      "description": "Use interactive prompts for configuration",
+      "default": true,
+      "required": false
+    },
+    "api_key": {
+      "type": "string",
+      "description": "API key value (if not using interactive mode)",
+      "required": false
+    }
+  },
+  "responses": {
+    "success": {
+      "exit_code": 0,
+      "stdout": "Provider '{provider}' configured successfully.",
+      "stderr": "",
+      "database_updated": true
+    },
+    "invalid_provider": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: Unsupported provider '{provider}'. Supported providers: openrouter, requesty",
+      "database_updated": false
+    },
+    "invalid_key": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: Invalid API key format for provider '{provider}'",
+      "database_updated": false
+    },
+    "key_exists": {
+      "exit_code": 0,
+      "stdout": "Provider '{provider}' already configured. Use --force to overwrite.",
+      "stderr": "",
+      "database_updated": false
+    }
+  },
+  "preconditions": {
+    "database_accessible": "SQLite database must be accessible",
+    "provider_supported": "Provider must be in supported list"
+  },
+  "postconditions": {
+    "provider_record_created": "Provider record exists in api_providers table",
+    "key_record_created": "API key record created in api_keys table",
+    "key_encrypted": "API key stored encrypted",
+    "configuration_valid": "Configuration can be used for API calls"
+  },
+  "interactive_flow": {
+    "prompts": [
+      {
+        "message": "Enter API key for {provider}:",
+        "secure": true,
+        "validation": "non_empty"
+      },
+      {
+        "message": "Confirm API key (re-enter):",
+        "secure": true,
+        "validation": "matches_previous"
+      }
+    ],
+    "confirmation": "Configuration saved successfully for provider '{provider}'"
+  }
+}
