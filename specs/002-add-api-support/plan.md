@@ -1,7 +1,7 @@
-# Implementation Plan: Build a command-line tool called bananagen
+# Implementation Plan: Add API Support for OpenRouter and Requesty Gemini 2.5 Flash
 
-**Branch**: `001-build-a-command` | **Date**: September 10, 2025 | **Spec**: /specs/001-build-a-command/spec.md
-**Input**: Feature specification from `/specs/001-build-a-command/spec.md`
+**Branch**: `002-add-api-support` | **Date**: September 11, 2025 | **Spec**: c:\Users\kyle\projects\bananagen\specs\002-add-api-support\spec.md
+**Input**: Feature specification from `c:\Users\kyle\projects\bananagen\specs\002-add-api-support\spec.md`
 
 ## Execution Flow (/plan command scope)
 ```
@@ -29,57 +29,58 @@
 - Phase 3-4: Implementation execution (manual or via tools)
 
 ## Summary
-Build a command-line tool called bananagen that generates ready-to-use image assets by driving the Nano Banana (Gemini 2.5 Flash) model. The tool will create placeholder images, process them with prompts to match dimensions, support batch workflows, scan-and-replace in repos, provide agent-friendly interfaces, store metadata for reproducibility, and include developer ergonomics like dry-run and JSON output. Technical approach: Python 3.10+ with Click CLI, Pillow for image handling, aiohttp for async Gemini calls, FastAPI for optional HTTP API, SQLite for metadata storage, pytest for testing, and Poetry for packaging.
+Add support for OpenRouter and Requesty APIs as alternative providers for Gemini 2.5 Flash image generation in Bananagen CLI tool. Include optional interactive setup script/option for API configuration management. Extend existing adapter pattern to support multiple providers while maintaining compatibility.
 
 ## Technical Context
 **Language/Version**: Python 3.10+  
-**Primary Dependencies**: Click (CLI), Pillow (image handling), aiohttp or httpx (async HTTP), FastAPI (optional HTTP API), sqlite3 (storage)  
-**Storage**: SQLite for metadata (generations and batches tables)  
-**Testing**: pytest for unit and integration tests  
-**Target Platform**: Cross-platform (Linux, macOS, Windows)  
-**Project Type**: single (CLI tool with optional server subcommand)  
-**Performance Goals**: Handle batch processing with configurable concurrency, rate-limiting to avoid throttling  
-**Constraints**: Safe rate-limiting with exponential backoff, deterministic and idempotent where possible, small dependency surface  
-**Scale/Scope**: Support batch jobs, concurrent execution, scan large repos
+**Primary Dependencies**: Click (CLI), Pillow (image processing), aiohttp (async HTTP), sqlite3 (metadata storage)  
+**Storage**: SQLite database for metadata and configuration  
+**Testing**: pytest with unit, integration, and contract tests  
+**Target Platform**: Cross-platform (Windows, Linux, macOS)  
+**Project Type**: CLI tool (single project)  
+**Performance Goals**: Maintain existing performance levels for image generation  
+**Constraints**: Must maintain backward compatibility with existing Gemini workflows  
+**Scale/Scope**: Support 2 additional providers (OpenRouter, Requesty) with extensible architecture for future providers  
+**Additional Details**: Optional interactive setup script/option for API configuration
 
 ## Constitution Check
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
 **Simplicity**:
-- Projects: 1 (bananagen package)
-- Using framework directly? yes (Click, FastAPI, etc.)
-- Single data model? yes (SQLite tables)
-- Avoiding patterns? yes (no unnecessary Repository/UoW)
+- Projects: [#] (max 3 - e.g., api, cli, tests)
+- Using framework directly? (no wrapper classes)
+- Single data model? (no DTOs unless serialization differs)
+- Avoiding patterns? (no Repository/UoW without proven need)
 
 **Architecture**:
-- EVERY feature as library? yes (bananagen as library)
-- Libraries listed: bananagen (core image generation functionality)
-- CLI per library: bananagen command with subcommands
-- Library docs: README and quickstart planned
+- EVERY feature as library? (no direct app code)
+- Libraries listed: [name + purpose for each]
+- CLI per library: [commands with --help/--version/--format]
+- Library docs: llms.txt format planned?
 
 **Testing (NON-NEGOTIABLE)**:
-- RED-GREEN-Refactor cycle enforced? yes
-- Git commits show tests before implementation? yes
-- Order: Contract→Integration→E2E→Unit strictly followed? yes
-- Real dependencies used? yes (SQLite, Gemini API)
-- Integration tests for: new libraries, contract changes, shared schemas? yes
-- FORBIDDEN: Implementation before test, skipping RED phase - enforced
+- RED-GREEN-Refactor cycle enforced? (test MUST fail first)
+- Git commits show tests before implementation?
+- Order: Contract→Integration→E2E→Unit strictly followed?
+- Real dependencies used? (actual DBs, not mocks)
+- Integration tests for: new libraries, contract changes, shared schemas?
+- FORBIDDEN: Implementation before test, skipping RED phase
 
 **Observability**:
-- Structured logging included? yes (std logging with JSON option)
-- Frontend logs → backend? N/A (CLI tool)
-- Error context sufficient? yes
+- Structured logging included?
+- Frontend logs → backend? (unified stream)
+- Error context sufficient?
 
 **Versioning**:
-- Version number assigned? yes (via Poetry)
-- BUILD increments on every change? yes
-- Breaking changes handled? yes (migration for DB if needed)
+- Version number assigned? (MAJOR.MINOR.BUILD)
+- BUILD increments on every change?
+- Breaking changes handled? (parallel tests, migration plan)
 
 ## Project Structure
 
 ### Documentation (this feature)
 ```
-specs/001-build-a-command/
+specs/[###-feature]/
 ├── plan.md              # This file (/plan command output)
 ├── research.md          # Phase 0 output (/plan command)
 ├── data-model.md        # Phase 1 output (/plan command)
@@ -125,7 +126,7 @@ ios/ or android/
 └── [platform-specific structure]
 ```
 
-**Structure Decision**: Option 1 (single project, CLI tool)
+**Structure Decision**: [DEFAULT to Option 1 unless Technical Context indicates web/mobile app]
 
 ## Phase 0: Outline & Research
 1. **Extract unknowns from Technical Context** above:
@@ -186,17 +187,28 @@ ios/ or android/
 **Task Generation Strategy**:
 - Load `/templates/tasks-template.md` as base
 - Generate tasks from Phase 1 design docs (contracts, data model, quickstart)
-- Each contract → contract test task [P]
-- Each entity → model creation task [P] 
-- Each user story → integration test task
-- Implementation tasks to make tests pass
+- Each contract (generate-command.json, configure-command.json) → contract test task [P]
+- Each entity (API Provider, API Key) → model creation and migration task [P]
+- Each user story from spec → integration test task
+- Provider adapter implementation tasks (OpenRouterAdapter, RequestyAdapter)
+- CLI extension tasks (configure command, --provider option)
+- Database migration and encryption setup tasks
+- Interactive configuration implementation
 
 **Ordering Strategy**:
-- TDD order: Tests before implementation 
-- Dependency order: Models before services before UI
-- Mark [P] for parallel execution (independent files)
+- TDD order: Contract tests → Integration tests → Implementation
+- Dependency order: Database schema → Models → Adapters → CLI → Tests
+- Mark [P] for parallel execution (independent files like separate adapter classes)
+- Sequential for interdependent tasks (CLI depends on adapters, tests depend on implementation)
 
-**Estimated Output**: 25-30 numbered, ordered tasks in tasks.md
+**Estimated Output**: 20-25 numbered, ordered tasks in tasks.md including:
+- 2 contract test tasks
+- 2 model/migration tasks  
+- 3 adapter implementation tasks
+- 4 CLI extension tasks
+- 2 database setup tasks
+- 5 integration test tasks
+- 2 validation tasks
 
 **IMPORTANT**: This phase is executed by the /tasks command, NOT by /plan
 
@@ -231,50 +243,7 @@ ios/ or android/
 - [x] Initial Constitution Check: PASS
 - [x] Post-Design Constitution Check: PASS
 - [x] All NEEDS CLARIFICATION resolved
-- [x] Complexity deviations documented
+- [ ] Complexity deviations documented
 
 ---
----
-
-## Workflow Diagram
-```mermaid
-graph TD
-    A[Start: Phase 3.1 Setup T001] --> B[Phase 3.2 Tests First T010-T018]
-    B --> C{Tests Failing?}
-    C -->|No| B[Write Tests]
-    C -->|Yes| D[Phase 3.3 Core Impl T002-T009]
-    D --> E[Phase 3.4 Integration T019-T023]
-    E --> F[Phase 3.5 Polish T024-T029]
-    F --> G[Project Complete]
-
-    subgraph "Core Implementation Order"
-        D1[T002: Placeholder generation]
-        D2[T003: Gemini adapter mock]
-        D3[T004: CLI framework]
-        D4[T005: DB storage]
-        D5[T006: Batch runner]
-        D6[T007: Scanner]
-        D7[T008: FastAPI API]
-        D8[T009: Agent docs]
-        D1 --> D2
-        D2 --> D3
-        D4 --> D5
-        D3 --> D4
-        D5 --> D6
-        D6 --> D7
-    end
-
-    subgraph "Test Categories"
-        B1[T010: Unit tests]
-        B2[T011-T014: Contract tests]
-        B3[T015-T018: Integration tests]
-    end
-
-    B1 --> B2
-    B2 --> B3
-```
-
----
-
-*Based on Constitution v2.1.1 - See `/memory/constitution.md`*
 *Based on Constitution v2.1.1 - See `/memory/constitution.md`*

@@ -43,45 +43,60 @@
 - Paths shown below assume single project - adjust based on plan.md structure
 
 ## Phase 3.1: Setup
-- [ ] T001 Create repo skeleton and tooling. Files: README.md, pyproject.toml (or setup.cfg), .gitignore, docs/, tests/. Commands: git init, create virtualenv, add basic README with usage examples. Acceptance: python -m bananagen --help prints help (placeholder CLI stub).
+- [x] T001 Create repo skeleton and tooling. Files: README.md, pyproject.toml (or setup.cfg), .gitignore, docs/, tests/. Commands: git init, create virtualenv, add basic README with usage examples. Acceptance: python -m bananagen --help prints help (placeholder CLI stub).
 
 ## Phase 3.2: Tests First (TDD) ⚠️ MUST COMPLETE BEFORE 3.3
 **CRITICAL: These tests MUST be written and MUST FAIL before ANY implementation**
-- [ ] T010 [P] Write unit tests for placeholder generation, gemini adapter mock, DB, and scanner heuristics. Files: tests/test_core.py, tests/test_gemini_mock.py, etc. Acceptance: pytest passes in CI.
+- [x] T010 [P] Write unit tests for placeholder generation, gemini adapter mock, DB, and scanner heuristics. Files: tests/test_core.py, tests/test_gemini_mock.py, tests/test_db.py, tests/test_scanner.py. Acceptance: pytest passes in CI.
+- [x] T011 [P] Write contract test for POST /generate endpoint. Files: tests/contract/test_generate_post.py. Acceptance: Test validates request/response schema against openapi.yaml.
+- [x] T012 [P] Write contract test for POST /batch endpoint. Files: tests/contract/test_batch_post.py. Acceptance: Test validates batch request/response schemas.
+- [x] T013 [P] Write contract test for GET /status/{id} endpoint. Files: tests/contract/test_status_get.py. Acceptance: Test validates status response schema.
+- [x] T014 [P] Write contract test for POST /scan endpoint. Files: tests/contract/test_scan_post.py. Acceptance: Test validates scan request/response schemas.
+- [x] T015 [P] Write integration test for placeholder generation workflow. Files: tests/integration/test_placeholder_workflow.py. Acceptance: End-to-end test from CLI to file creation.
+- [x] T016 [P] Write integration test for image generation workflow. Files: tests/integration/test_generation_workflow.py. Acceptance: End-to-end test from placeholder to final image.
+- [x] T017 [P] Write integration test for batch processing workflow. Files: tests/integration/test_batch_workflow.py. Acceptance: End-to-end test for concurrent job processing.
+- [x] T018 [P] Write integration test for scan-and-replace workflow. Files: tests/integration/test_scan_workflow.py. Acceptance: End-to-end test for placeholder detection and replacement.
 
 ## Phase 3.3: Core Implementation (ONLY after tests are failing)
-- [ ] T002 [P] Implement core.generate_placeholder(width, height, color, transparent, out_path). Files: bananagen/core.py. Acceptance: Running bananagen generate --width 300 --height 200 --out ./tmp/p.png produces a valid PNG of size 300x200.
-- [ ] T003 [P] Implement gemini_adapter.call_gemini(template_path, prompt, model, params) and a mock mode for local testing. Files: bananagen/gemini_adapter.py. Acceptance: In mock mode, the adapter returns a fake image file and metadata. No real API key required for dev.
-- [ ] T004 Implement Click-based CLI with subcommands: generate, batch, scan, serve, status. Files: bananagen/cli.py, __main__.py. Example: bananagen generate --width 1024 --height 1024 --prompt "..." --out ./assets/out.png --json. Acceptance: CLI accepts flags, produces JSON with id and status when --json is used.
-- [ ] T005 [P] Implement SQLite metadata storage and helpers (db.py). Acceptance: Every run of generate writes a generations row with prompt, file path, model and timestamp. Provide bananagen status <id> to query.
-- [ ] T006 [P] Implement batch_runner that accepts JSON/CSV list and runs jobs, controlling concurrency and backoff. Files: bananagen/batch_runner.py. Example jobs.json: [{"prompt":"A cat in a hat","width":512,"height":512,"out_path":"assets/cat1.png"}, ...]. Acceptance: bananagen batch --list jobs.json --concurrency 2 runs the jobs and writes results to DB.
-- [ ] T007 [P] Implement scanner.find_placeholders(root, pattern) + scanner.extract_context(path, source_hint) (alt text, manifest, README). Files: bananagen/scanner.py. Acceptance: bananagen scan --root ./site --pattern "*__placeholder__*" --dry-run yields a JSON plan of replacements. --replace executes them with confirmation or --yes.
-- [ ] T008 Implement FastAPI app exposing /generate, /batch, /status/{id}, /scan. Files: bananagen/server.py. Acceptance: curl -X POST http://localhost:9090/generate -d @req.json returns JSON response with job id.
-- [ ] T009 [P] Write example snippets showing how roo code or Claude Code should call bananagen. Files: docs/agent_integration.md. Acceptance: Clear examples in README.
+- [x] T002 [P] Implement core.generate_placeholder(width, height, color, transparent, out_path). Files: bananagen/core.py. Acceptance: Running bananagen generate --width 300 --height 200 --out ./tmp/p.png produces a valid PNG of size 300x200.
+- [x] T003 [P] Implement gemini_adapter.call_gemini(template_path, prompt, model, params) and a mock mode for local testing. Files: bananagen/gemini_adapter.py. Acceptance: In mock mode, the adapter returns a fake image file and metadata. No real API key required for dev.
+- [x] T004 Implement Click-based CLI with subcommands: generate, batch, scan, serve, status. Files: bananagen/cli.py, __main__.py. Example: bananagen generate --width 1024 --height 1024 --prompt "..." --out ./assets/out.png --json. Acceptance: CLI accepts flags, produces JSON with id and status when --json is used.
+- [x] T005 [P] Implement SQLite metadata storage and helpers (db.py). Acceptance: Every run of generate writes a generations row with prompt, file path, model and timestamp. Provide bananagen status <id> to query.
+- [x] T006 [P] Implement batch_runner that accepts JSON/CSV list and runs jobs, controlling concurrency and backoff. Files: bananagen/batch_runner.py. Example jobs.json: [{"prompt":"A cat in a hat","width":512,"height":512,"out_path":"assets/cat1.png"}, ...]. Acceptance: bananagen batch --list jobs.json --concurrency 2 runs the jobs and writes results to DB.
+- [x] T007 [P] Implement scanner.find_placeholders(root, pattern) + scanner.extract_context(path, source_hint) (alt text, manifest, README). Files: bananagen/scanner.py. Acceptance: bananagen scan --root ./site --pattern "*__placeholder__*" --dry-run yields a JSON plan of replacements. --replace executes them with confirmation or --yes.
+- [x] T008 Implement FastAPI app exposing /generate, /batch, /status/{id}, /scan. Files: bananagen/api.py. Acceptance: curl -X POST http://localhost:9090/generate -d @req.json returns JSON response with job id.
+- [x] T009 [P] Write example snippets showing how roo code or Claude Code should call bananagen. Files: docs/agent_integration.md. Acceptance: Clear examples in README.
 
 ## Phase 3.4: Integration
-- [ ] T011 Add packaging, a simple Makefile or tox for dev tasks, and publish notes. Files: pyproject.toml or setup.cfg, release workflow in .github/workflows/ci.yml. Acceptance: A bot or manual pip install -e . installs the CLI.
+- [ ] T019 Connect Gemini adapter to real API with environment variables
+- [ ] T020 Add async processing and background tasks to API
+- [ ] T021 Implement rate limiting and exponential backoff
+- [ ] T022 Add structured logging throughout application
+- [ ] T023 Add error handling and validation
 
 ## Phase 3.5: Polish
-- [ ] T012 [P] Implement caching, SHA-based re-use, --force, and --seed support in CLI. Add structured logging and --log-level. Acceptance: cache hits are used when identical prompt+params+size exist unless --force is used.
+- [ ] T024 [P] Implement caching, SHA-based re-use, --force, and --seed support in CLI. Add structured logging and --log-level. Acceptance: cache hits are used when identical prompt+params+size exist unless --force is used.
+- [ ] T025 [P] Add comprehensive unit tests for all modules. Files: tests/unit/test_*.py. Acceptance: >90% code coverage.
+- [ ] T026 Performance optimization and benchmarking
+- [ ] T027 [P] Update README.md with complete usage examples and API documentation
+- [ ] T028 Package for distribution with Poetry
+- [ ] T029 Create release workflow and CI/CD pipeline
 
 ## Dependencies
-- Tests (T010) before implementation (T002-T009)
+- Tests (T010-T018) before implementation (T002-T009)
 - T002 blocks T004
 - T003 blocks T004, T006
 - T005 blocks T006, T008
 - T004 blocks T006, T007, T008
-- Implementation before polish (T011-T012)
+- Implementation before polish (T019-T029)
 
 ## Parallel Example
 ```
-# Launch T002, T003, T005, T006, T007, T009 together:
-Task: "Implement core.generate_placeholder(width, height, color, transparent, out_path). Files: bananagen/core.py."
-Task: "Implement gemini_adapter.call_gemini(template_path, prompt, model, params) and a mock mode. Files: bananagen/gemini_adapter.py."
-Task: "Implement SQLite metadata storage and helpers (db.py)."
-Task: "Implement batch_runner that accepts JSON/CSV list and runs jobs. Files: bananagen/batch_runner.py."
-Task: "Implement scanner.find_placeholders(root, pattern) + scanner.extract_context. Files: bananagen/scanner.py."
-Task: "Write example snippets for agent integration. Files: docs/agent_integration.md."
+# Launch T010, T011, T012, T013 together:
+Task: "Write unit tests for placeholder generation, gemini adapter mock, DB, and scanner heuristics. Files: tests/test_core.py, tests/test_gemini_mock.py, tests/test_db.py, tests/test_scanner.py."
+Task: "Write contract test for POST /generate endpoint. Files: tests/contract/test_generate_post.py."
+Task: "Write contract test for POST /batch endpoint. Files: tests/contract/test_batch_post.py."
+Task: "Write contract test for GET /status/{id} endpoint. Files: tests/contract/test_status_get.py."
 ```
 
 ## Notes
@@ -91,12 +106,30 @@ Task: "Write example snippets for agent integration. Files: docs/agent_integrati
 - Avoid: vague tasks, same file conflicts
 
 ## Task Generation Rules
-- Each contract file → contract test task marked [P]
-- Each entity in data-model → model creation task marked [P]
-- Each endpoint → implementation task (not parallel if shared files)
-- Each user story → integration test marked [P]
-- Different files = can be parallel [P]
-- Same file = sequential (no [P])
+*Applied during main() execution*
+
+1. **From Contracts** (contracts/openapi.yaml):
+   - POST /generate → T011 contract test task [P]
+   - POST /batch → T012 contract test task [P]  
+   - GET /status/{id} → T013 contract test task [P]
+   - POST /scan → T014 contract test task [P]
+   - Each endpoint → implementation task (T008)
+   
+2. **From Data Model** (data-model.md):
+   - Image Asset entity → model creation task (covered in T005)
+   - Generation Job entity → model creation task (covered in T005)
+   - Metadata Record entity → model creation task (covered in T005)
+   - Batch entity → model creation task (covered in T005)
+   
+3. **From User Stories** (quickstart.md):
+   - Placeholder generation story → T015 integration test [P]
+   - Image generation story → T016 integration test [P]
+   - Batch processing story → T017 integration test [P]
+   - Scan and replace story → T018 integration test [P]
+
+4. **Ordering**:
+   - Setup → Tests → Models → Services → Endpoints → Polish
+   - Dependencies block parallel execution
 
 ## Instructions for the implementing agent
 
@@ -121,3 +154,13 @@ Tool prints:
 {"id":"uuid","status":"queued","out_path":"assets/banana.png","created_at":"2025-09-10T12:00:00Z"}
 
 Agent polls bananagen status <id> or GET /status/<id> to check completion and get sha256 + gemini response.
+
+## Validation Checklist
+*GATE: Checked by main() before returning*
+
+- [x] All contracts have corresponding tests (4 endpoints → 4 contract tests)
+- [x] All entities have model tasks (4 entities covered in T005)
+- [x] All tests come before implementation (T010-T018 before T002-T009)
+- [x] Parallel tasks truly independent (different files marked [P])
+- [x] Each task specifies exact file path
+- [x] No task modifies same file as another [P] task

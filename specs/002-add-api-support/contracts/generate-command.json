@@ -1,0 +1,77 @@
+{
+  "contract": "CLI Generate Command with Provider Support",
+  "version": "1.0.0",
+  "description": "Contract for the bananagen generate command extended with provider selection",
+  "command": "bananagen generate",
+  "options": {
+    "provider": {
+      "type": "string",
+      "description": "AI provider to use for generation",
+      "enum": ["gemini", "openrouter", "requesty"],
+      "default": "gemini",
+      "required": false
+    },
+    "prompt": {
+      "type": "string",
+      "description": "Text prompt for image generation",
+      "required": true
+    },
+    "width": {
+      "type": "integer",
+      "description": "Image width in pixels",
+      "minimum": 64,
+      "maximum": 2048,
+      "default": 1024,
+      "required": false
+    },
+    "height": {
+      "type": "integer",
+      "description": "Image height in pixels",
+      "minimum": 64,
+      "maximum": 2048,
+      "default": 1024,
+      "required": false
+    },
+    "out": {
+      "type": "string",
+      "description": "Output file path",
+      "required": true
+    }
+  },
+  "responses": {
+    "success": {
+      "exit_code": 0,
+      "stdout": "Image generated successfully: {output_path}",
+      "stderr": "",
+      "file_created": "{output_path}"
+    },
+    "provider_not_configured": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: Provider '{provider}' not configured. Run 'bananagen configure --provider {provider}' to set up API key.",
+      "file_created": false
+    },
+    "invalid_provider": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: Unsupported provider '{provider}'. Supported providers: gemini, openrouter, requesty",
+      "file_created": false
+    },
+    "api_error": {
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Error: API call failed - {error_message}",
+      "file_created": false
+    }
+  },
+  "preconditions": {
+    "provider_configured": "API key for selected provider must be configured",
+    "network_available": "Internet connection required for API calls",
+    "output_writable": "Output directory must be writable"
+  },
+  "postconditions": {
+    "image_generated": "Valid image file created at specified path",
+    "metadata_stored": "Generation metadata stored in database",
+    "usage_logged": "API usage tracked for billing/analytics"
+  }
+}
