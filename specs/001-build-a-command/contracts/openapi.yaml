@@ -1,0 +1,198 @@
+openapi: 3.0.3
+info:
+  title: Bananagen API
+  version: 1.0.0
+  description: API for generating images using Gemini 2.5 Flash
+
+servers:
+  - url: http://localhost:9090
+    description: Local development server
+
+paths:
+  /generate:
+    post:
+      summary: Generate an image
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateRequest'
+      responses:
+        '200':
+          description: Generation queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenerationResponse'
+        '400':
+          description: Bad request
+        '500':
+          description: Internal error
+
+  /batch:
+    post:
+      summary: Submit a batch of generation jobs
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchRequest'
+      responses:
+        '200':
+          description: Batch queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchResponse'
+        '400':
+          description: Bad request
+
+  /status/{id}:
+    get:
+      summary: Get status of a generation or batch
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+        '404':
+          description: Not found
+
+  /scan:
+    post:
+      summary: Scan and replace placeholders
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScanRequest'
+      responses:
+        '200':
+          description: Scan completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScanResponse'
+
+components:
+  schemas:
+    GenerateRequest:
+      type: object
+      required:
+        - prompt
+        - width
+        - height
+        - out_path
+      properties:
+        prompt:
+          type: string
+        width:
+          type: integer
+          minimum: 1
+        height:
+          type: integer
+          minimum: 1
+        transparent:
+          type: boolean
+          default: false
+        placeholder_color:
+          type: string
+          default: "#ffffff"
+        out_path:
+          type: string
+        model:
+          type: string
+          default: "nano-banana-2.5-flash"
+        seed:
+          type: integer
+        metadata:
+          type: object
+
+    GenerationResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          enum: [queued, running, done, error]
+        out_path:
+          type: string
+        sha256:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        gemini_response:
+          type: object
+
+    BatchRequest:
+      type: object
+      required:
+        - jobs
+      properties:
+        jobs:
+          type: array
+          items:
+            $ref: '#/components/schemas/GenerateRequest'
+
+    BatchResponse:
+      type: object
+      properties:
+        batch_id:
+          type: string
+        status:
+          type: string
+          enum: [queued, running, done, error]
+
+    StatusResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+        details:
+          type: object
+
+    ScanRequest:
+      type: object
+      required:
+        - root
+      properties:
+        root:
+          type: string
+        pattern:
+          type: string
+          default: "*__placeholder__*"
+        replace:
+          type: boolean
+          default: true
+        extract_from:
+          type: array
+          items:
+            type: string
+            enum: [alt, manifest, readme, json]
+
+    ScanResponse:
+      type: object
+      properties:
+        replaced:
+          type: integer
+        errors:
+          type: integer
+        details:
+          type: array
+          items:
+            type: object
