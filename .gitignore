@@ -141,6 +141,8 @@ assets/
 *.png
 *.jpg
 *.jpeg
+*.gif
+*.webp
 
 # Database files
 *.db
@@ -151,3 +153,34 @@ assets/
 .env.local
 .env.production
 .env.staging
+
+# Test files and outputs
+test_*.py
+test_*.png
+test_*.jpg
+test_*.jpeg
+test_*.json
+*_test_*
+*_placeholder*
+*_generated*
+requesty_example.py
+check_db.py
+
+# Debug and log files
+debug.log
+output.log
+*.log
+
+# Temporary directories and files
+tmp/
+temp/
+memory/
+batch_output*
+
+# Generated documentation
+docs/_build/
+docs/build/
+
+# Runtime files
+*.pid
+*.sock
