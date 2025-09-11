@@ -7,12 +7,17 @@ import uuid
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, Any
+from dotenv import load_dotenv
+
 from .core import generate_placeholder, encrypt_key
 from .gemini_adapter import call_gemini
 from .logging_config import configure_logging
 from .db import Database, GenerationRecord, APIProviderRecord, APIKeyRecord
 from .models.api_provider import APIProvider
 from .models.api_key import APIKey
+
+# Load environment variables from .env file
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -219,25 +224,26 @@ def confirm_configuration(details: Dict[str, Any]) -> bool:
 def main(log_level):
     """Bananagen CLI"""
     try:
-        # Check for API keys (configured providers only - Gemini env vars commented out)
-        # has_env_keys = bool(os.getenv('NANO_BANANA_API_KEY') or os.getenv('GEMINI_API_KEY'))
-        has_configured_providers = False
+        # Check for API keys in environment variables
+        has_env_keys = bool(
+            os.getenv('REQUESTY_API_KEY') or 
+            os.getenv('OPENROUTER_API_KEY') or 
+            os.getenv('GEMINI_API_KEY') or 
+            os.getenv('NANO_BANANA_API_KEY')
+        )
         
-        try:
-            db = Database("bananagen.db")
-            providers = db.get_all_api_providers()
-            for provider in providers:
-                if provider.is_active:
-                    api_keys = db.get_api_keys_for_provider(provider.id)
-                    if api_keys:
-                        has_configured_providers = True
-                        break
-        except Exception:
-            # If database check fails, continue without configured providers
-            pass
-        
-        if not has_configured_providers:
-            logger.warning("No API provider configured. Configure a provider with 'bananagen configure' for real API access.")
+        if not has_env_keys:
+            logger.warning("No API keys found in environment. Set API keys in .env file for real API access.")
+        else:
+            # Log which providers are configured
+            configured = []
+            if os.getenv('REQUESTY_API_KEY'):
+                configured.append('requesty')
+            if os.getenv('OPENROUTER_API_KEY'):
+                configured.append('openrouter')
+            if os.getenv('GEMINI_API_KEY') or os.getenv('NANO_BANANA_API_KEY'):
+                configured.append('gemini')
+            logger.info(f"API providers configured via .env: {', '.join(configured)}")
         
         configure_logging(log_level)
         logger.info("CLI initialized", extra={"log_level": log_level})
@@ -298,7 +304,7 @@ def generate(provider, template_path, prompt, width, height, out_path, json, for
 
     # Set default provider if not specified - commenting out Gemini for now
     if provider is None:
-        provider = 'requesty'  # Changed from 'gemini' to 'requesty'
+        provider = 'openrouter'  # Changed from 'requesty' to 'openrouter'
 
     logger.info("Starting generate command", extra={
         "provider": provider,
@@ -340,8 +346,15 @@ def generate(provider, template_path, prompt, width, height, out_path, json, for
             if selected_provider not in ['openrouter', 'requesty']:  # removed 'gemini'
                 raise click.BadParameter(f"Unsupported provider '{selected_provider}'. Supported providers: openrouter, requesty")
     
-            # Check if provider is configured
-            # if selected_provider != 'gemini':  # All providers now need configuration
+            # Check if provider is configured - check environment variables first
+            env_api_key = None
+            if selected_provider == 'openrouter':
+                env_api_key = os.getenv('OPENROUTER_API_KEY')
+            elif selected_provider == 'requesty':
+                env_api_key = os.getenv('REQUESTY_API_KEY')
+            
+            if not env_api_key:
+                # No environment variable, check database
                 db = Database("bananagen.db")
                 try:
                     provider_record = db.get_api_provider(selected_provider)
@@ -408,14 +421,16 @@ def generate(provider, template_path, prompt, width, height, out_path, json, for
 
             # Determine model based on provider - Gemini commented out
             if selected_provider == 'openrouter':
-                model_name = 'google/gemini-1.5-flash'  # OpenRouter uses this format
+                model_name = os.getenv('OPENROUTER_MODEL', 'google/gemini-1.5-flash')  # OpenRouter uses this format
+                logger.info(f"CLI: OpenRouter model from env: {os.getenv('OPENROUTER_MODEL')}, using: {model_name}")
+                logger.info(f"CLI: All MODEL env vars: OPENROUTER_MODEL={os.getenv('OPENROUTER_MODEL')}, REQUESTY_MODEL={os.getenv('REQUESTY_MODEL')}, DEFAULT_MODEL={os.getenv('DEFAULT_MODEL')}")
             elif selected_provider == 'requesty':
-                model_name = 'coding/gemini-2.5-flash'  # Requesty uses this format
+                model_name = os.getenv('REQUESTY_MODEL', 'coding/gemini-2.5-flash')  # Requesty uses this format
             # else:  # gemini - commented out
-            #     model_name = 'gemini-2.5-flash'
+            #     model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
             else:
                 # Fallback for any other provider
-                model_name = 'coding/gemini-2.5-flash'
+                model_name = os.getenv('DEFAULT_MODEL', 'coding/gemini-2.5-flash')
 
             logger.info("Using model", extra={"provider": selected_provider, "model": model_name})
 

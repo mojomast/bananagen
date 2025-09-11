@@ -8,25 +8,30 @@ import os
 import openai
 from PIL import Image
 from typing import Dict, Optional
+from dotenv import load_dotenv
 
-from bananagen.core import decrypt_key
 from bananagen.gemini_adapter import mock_generate
+
+# Load environment variables from .env file
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
 class RequestyAdapter:
     """Adapter for accessing Gemini models through Requesty."""
 
-    def __init__(self, base_url: str = "https://router.requesty.ai/v1", api_key_encrypted: str = None, provider_details: Dict = None):
-        self.base_url = base_url
-        self.api_key_encrypted = api_key_encrypted
+    def __init__(self, base_url: str = None, api_key_encrypted: str = None, provider_details: Dict = None):
+        # Get base URL from environment or use default
+        self.base_url = base_url or os.getenv("REQUESTY_BASE_URL", "https://router.requesty.ai/v1")
+        logger.info(f"RequestyAdapter initialized with base_url: {self.base_url}")
+        self.api_key_encrypted = api_key_encrypted  # Keep for backward compatibility
         self.provider_details = provider_details or {}
 
-    async def call_gemini(self, template_path: str, prompt: str, model: str = "coding/gemini-2.5-flash", params: Dict = None) -> tuple[str, Dict]:
+    async def call_gemini(self, template_path: str, prompt: str, model: str = None, params: Dict = None) -> tuple[str, Dict]:
         """Call Gemini model via Requesty for image generation using OpenAI client format."""
-        # Use model from provider details if available
-        if not model or model == "coding/gemini-2.5-flash":
-            model = self.provider_details.get("model_name", "coding/gemini-2.5-flash")
+        # Get model from environment, provider details, or use default
+        if not model:
+            model = os.getenv("REQUESTY_MODEL") or self.provider_details.get("model_name", "coding/gemini-2.5-flash")
         
         params = params or {}
 
@@ -36,36 +41,25 @@ class RequestyAdapter:
         if not prompt or not prompt.strip():
             raise ValueError("Prompt cannot be empty")
 
-        api_key = decrypt_key(self.api_key_encrypted) if self.api_key_encrypted else os.getenv("REQUESTY_API_KEY")
+        # Try to get API key from environment first, then fall back to encrypted key
+        api_key = os.getenv("REQUESTY_API_KEY")
+        if not api_key and self.api_key_encrypted:
+            # Only try to decrypt if we have an encrypted key and no env var
+            try:
+                from bananagen.core import decrypt_key
+                api_key = decrypt_key(self.api_key_encrypted)
+            except Exception as e:
+                logger.warning(f"Failed to decrypt API key: {e}")
+        
         if not api_key:
-            logger.error("No API key found for Requesty")
-            raise ValueError("API key not found")
+            logger.error("No API key found for Requesty. Set REQUESTY_API_KEY in .env file")
+            raise ValueError("API key not found. Please set REQUESTY_API_KEY in your .env file")
 
         max_retries = 3
         last_error = None
 
         for attempt in range(max_retries):
             try:
-                logger.info(f"Requesty API call attempt {attempt + 1}/{max_retries}", extra={
-                    "model": model,
-                    "template_path": template_path,
-                    "prompt_preview": prompt[:50] + '...' if len(prompt) > 50 else prompt
-                })
-
-                # Initialize OpenAI client with Requesty configuration
-                client = openai.OpenAI(
-                    api_key=api_key,
-                    base_url=self.base_url,
-                    default_headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "HTTP-Referer": self.provider_details.get("referer", "https://bananagen.com"),
-                        "X-Title": self.provider_details.get("app_name", "BananaGen")
-                    }
-                )
-
-                # For image generation, we'll use the chat completions endpoint with a vision model
-                # and ask it to describe what should be generated based on the template
-                
                 # Load and encode template image
                 with open(template_path, 'rb') as f:
                     image_data = f.read()
@@ -90,6 +84,30 @@ class RequestyAdapter:
                     }
                 ]
 
+                logger.info(f"Requesty API call attempt {attempt + 1}/{max_retries}", extra={
+                    "model": model,
+                    "template_path": template_path,
+                    "prompt_preview": prompt[:50] + '...' if len(prompt) > 50 else prompt,
+                    "base_url": self.base_url,
+                    "request_payload": {
+                        "model": model,
+                        "messages": messages,
+                        "max_tokens": params.get("max_tokens", 1000),
+                        "temperature": params.get("temperature", 0.7)
+                    }
+                })
+
+                # Initialize OpenAI client with Requesty configuration
+                client = openai.OpenAI(
+                    api_key=api_key,
+                    base_url=self.base_url,
+                    default_headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "HTTP-Referer": self.provider_details.get("referer", "https://bananagen.com"),
+                        "X-Title": self.provider_details.get("app_name", "BananaGen")
+                    }
+                )
+
                 # Make the API call
                 response = client.chat.completions.create(
                     model=model,
@@ -107,7 +125,29 @@ class RequestyAdapter:
                 logger.info("Requesty API response received", extra={
                     "model": model,
                     "response_id": getattr(response, 'id', 'unknown'),
-                    "response_preview": response_content[:100] + '...' if response_content and len(response_content) > 100 else response_content
+                    "response_preview": response_content[:100] + '...' if response_content and len(response_content) > 100 else response_content,
+                    "response_model": getattr(response, 'model', 'unknown'),
+                    "usage": getattr(response, 'usage', {}),
+                    "finish_reason": getattr(response.choices[0], 'finish_reason', 'unknown') if response.choices else 'unknown',
+                    "full_response": {
+                        "id": getattr(response, 'id', 'unknown'),
+                        "object": getattr(response, 'object', 'unknown'),
+                        "created": getattr(response, 'created', 'unknown'),
+                        "model": getattr(response, 'model', 'unknown'),
+                        "choices": [{
+                            "index": getattr(choice, 'index', 0),
+                            "message": {
+                                "role": getattr(choice.message, 'role', 'unknown'),
+                                "content": response_content
+                            },
+                            "finish_reason": getattr(choice, 'finish_reason', 'unknown')
+                        } for choice in response.choices] if response.choices else [],
+                        "usage": {
+                            "prompt_tokens": getattr(response.usage, 'prompt_tokens', 0) if hasattr(response, 'usage') and response.usage else 0,
+                            "completion_tokens": getattr(response.usage, 'completion_tokens', 0) if hasattr(response, 'usage') and response.usage else 0,
+                            "total_tokens": getattr(response.usage, 'total_tokens', 0) if hasattr(response, 'usage') and response.usage else 0
+                        } if hasattr(response, 'usage') and response.usage else {}
+                    }
                 })
 
                 # Generate output path
@@ -137,14 +177,36 @@ class RequestyAdapter:
 
             except openai.OpenAIError as e:
                 last_error = e
-                logger.warning(f"OpenAI API error on attempt {attempt + 1}", extra={"error": str(e)})
+                logger.warning(f"OpenAI API error on attempt {attempt + 1}", extra={
+                    "error": str(e),
+                    "error_type": type(e).__name__,
+                    "model": model,
+                    "base_url": self.base_url,
+                    "attempt": attempt + 1,
+                    "max_retries": max_retries,
+                    "request_details": {
+                        "model": model,
+                        "messages_count": len(messages) if 'messages' in locals() else 0,
+                        "has_image": any(msg.get('content', []) and 
+                                       any(content.get('type') == 'image_url' for content in msg.get('content', [])) 
+                                       for msg in messages) if 'messages' in locals() else False
+                    }
+                })
                 if attempt < max_retries - 1:
                     await asyncio.sleep(2 ** attempt)
                 else:
                     raise Exception(f"OpenAI API error after {max_retries} attempts: {e}")
             except Exception as e:
                 last_error = e
-                logger.error(f"Unexpected error on attempt {attempt + 1}", extra={"error": str(e), "error_type": type(e).__name__, "model": model})
+                logger.error(f"Unexpected error on attempt {attempt + 1}", extra={
+                    "error": str(e), 
+                    "error_type": type(e).__name__, 
+                    "model": model,
+                    "base_url": self.base_url,
+                    "attempt": attempt + 1,
+                    "max_retries": max_retries,
+                    "traceback": __import__('traceback').format_exc()
+                })
                 if attempt < max_retries - 1:
                     await asyncio.sleep(2 ** attempt)
                 else:
