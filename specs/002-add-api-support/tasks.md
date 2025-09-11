@@ -42,14 +42,14 @@
 - All paths are absolute for clarity
 
 ## Phase 3.1: Setup
-- [ ] T001 Create database migration script for API provider tables in `c:\Users\kyle\projects\bananagen\bananagen\db.py`
+- [x] T001 Create database migration script for API provider tables in `c:\Users\kyle\projects\bananagen\bananagen\db.py`
 - [ ] T002 Set up encryption utilities for API keys in `c:\Users\kyle\projects\bananagen\bananagen\core.py`
-- [ ] T003 [P] Add any new dependencies to `c:\Users\kyle\projects\bananagen\pyproject.toml`
+- [x] T003 [P] Add any new dependencies to `c:\Users\kyle\projects\bananagen\pyproject.toml`
 
 ## Phase 3.2: Tests First (TDD) ⚠️ MUST COMPLETE BEFORE 3.3
 **CRITICAL: These tests MUST be written and MUST FAIL before ANY implementation**
-- [ ] T004 [P] Contract test for generate command with provider support in `c:\Users\kyle\projects\bananagen\tests\contract\test_generate_provider.py`
-- [ ] T005 [P] Contract test for configure command in `c:\Users\kyle\projects\bananagen\tests\contract\test_configure_provider.py`
+- [x] T004 [P] Contract test for generate command with provider support in `c:\Users\kyle\projects\bananagen\tests\contract\test_generate_provider.py`
+- [x] T005 [P] Contract test for configure command in `c:\Users\kyle\projects\bananagen\tests\contract\test_configure_provider.py`
 - [ ] T006 [P] Integration test for OpenRouter provider configuration in `c:\Users\kyle\projects\bananagen\tests\integration\test_openrouter_config.py`
 - [ ] T007 [P] Integration test for Requesty provider configuration in `c:\Users\kyle\projects\bananagen\tests\integration\test_requesty_config.py`
 - [ ] T008 [P] Integration test for multi-provider image generation in `c:\Users\kyle\projects\bananagen\tests\integration\test_multi_provider_generation.py`
@@ -59,8 +59,8 @@
 - [ ] T010 [P] API Key model class in `c:\Users\kyle\projects\bananagen\bananagen\models\api_key.py`
 - [ ] T011 [P] OpenRouterAdapter class in `c:\Users\kyle\projects\bananagen\bananagen\adapters\openrouter_adapter.py`
 - [ ] T012 [P] RequestyAdapter class in `c:\Users\kyle\projects\bananagen\bananagen\adapters\requesty_adapter.py`
-- [ ] T013 Extend CLI generate command with --provider option in `c:\Users\kyle\projects\bananagen\bananagen\cli.py`
-- [ ] T014 Add configure CLI command in `c:\Users\kyle\projects\bananagen\bananagen\cli.py`
+- [x] T013 Extend CLI generate command with --provider option in `c:\Users\kyle\projects\bananagen\bananagen\cli.py`
+- [x] T014 Add configure CLI command in `c:\Users\kyle\projects\bananagen\bananagen\cli.py`
 - [ ] T015 Update core generation logic to use provider adapters in `c:\Users\kyle\projects\bananagen\bananagen\core.py`
 
 ## Phase 3.4: Integration
@@ -136,5 +136,7 @@ Task: "Integration test for multi-provider image generation in c:\Users\kyle\pro
 - [x] All tests come before implementation (T004-T008 before T009-T019)
 - [x] Parallel tasks truly independent (different file paths)
 - [x] Each task specifies exact file path (all absolute paths)
-- [x] No task modifies same file as another [P] task (verified)</content>
+- [x] No task modifies same file as another [P] task (verified)
+- [x] CLI commands for generate and configure implemented (T013, T014)
+- [x] Basic provider validation in CLI (gemini, openrouter, requesty support)</content>
 <parameter name="filePath">c:\Users\kyle\projects\bananagen\specs\002-add-api-support\tasks.md

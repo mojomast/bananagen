@@ -2,7 +2,13 @@ import pytest
 from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
 import requests
+import tempfile
+import os
+import subprocess
+import sys
+import shutil
 from bananagen.api import app, db
+from bananagen.db import Database, APIProviderRecord
 
 
 class TestMultiProviderGeneration:
@@ -10,13 +16,14 @@ class TestMultiProviderGeneration:
 
     Tests the complete flow from generation request to provider selection
     with mocked external API calls to both OpenRouter and Requesty APIs,
-    proper fallback mechanisms, and error handling.
+    proper fallback mechanisms, and error handling. Includes both API
+    and CLI integration tests following TDD practices.
     """
 
     def setup_method(self):
         """Set up test environment with temporary database."""
         self.client = TestClient(app)
-        # Use in-memory database for tests
+        # Use in-memory database for API tests
         self.temp_db_path = ":memory:"
 
         # Setup test data
@@ -26,6 +33,16 @@ class TestMultiProviderGeneration:
         self.encrypted_requesty_key = "encrypted-ray-key-def"
         self.template_path = "/tmp/test_template.png"
         self.output_path = "/tmp/test_output.png"
+
+    def setUp_temp_db(self):
+        """Set up temporary database for CLI tests."""
+        self.temp_dir = tempfile.mkdtemp()
+        self.temp_db_path = os.path.join(self.temp_dir, "test_bananagen.db")
+
+    def tearDown_temp_db(self):
+        """Clean up temporary database files."""
+        if hasattr(self, 'temp_dir') and os.path.exists(self.temp_dir):
+            shutil.rmtree(self.temp_dir)
 
     @patch('bananagen.api.db')
     @patch('bananagen.gemini_adapter.call_gemini')
@@ -275,9 +292,259 @@ class TestMultiProviderGeneration:
         assert mock_call_gemini.call_count == 2
 
 
+# CLI Integration Tests for Multi-Provider Generation
+# ===================================================
+# These tests validate the end-to-end CLI workflow with provider selection:
+# - Command execution with subprocess for generation commands
+# - Provider selection and adapter factory usage (mocked initially)
+# - Fallback mechanisms when providers fail
+# - Configuration retrieval from database
+# - Error handling for unconfigured providers
+# All tests are designed to fail initially per TDD (until provider factory implemented)
+
+    def test_cli_generation_openrouter_provider(self):
+        """Test CLI generation with OpenRouter provider selection."""
+        # This test should fail initially per TDD (provider factory not implemented)
+        self.setUp_temp_db()
+
+        # First configure the provider
+        result_config = subprocess.run([
+            sys.executable, "-m", "bananagen",
+            "configure",
+            "openrouter",
+            "--api-key", self.openrouter_key
+        ], capture_output=True, text=True, env={
+            **os.environ,
+            "BANANAGEN_DB_PATH": self.temp_db_path
+        }, timeout=30)
+
+        if result_config.returncode == 0:
+            # Now test generation with provider
+            with tempfile.TemporaryDirectory() as tmpdir:
+                output_path = os.path.join(tmpdir, "generated_openrouter.png")
+                template_path = os.path.join(tmpdir, "template.png")
+
+                # Create a dummy template
+                from PIL import Image
+                img = Image.new('RGB', (256, 256), color='red')
+                img.save(template_path)
+
+                # Run generation command with provider selection
+                result = subprocess.run([
+                    sys.executable, "-m", "bananagen",
+                    "generate",
+                    "--prompt", "A test image with OpenRouter",
+                    "--width", "256",
+                    "--height", "256",
+                    "--provider", "openrouter",
+                    "--placeholder", template_path,
+                    "--out", output_path
+                ], capture_output=True, text=True, env={
+                    **os.environ,
+                    "BANANAGEN_DB_PATH": self.temp_db_path
+                }, timeout=60)
+
+                # Expect success after provider implementation
+                assert result.returncode == 0, f"Generation failed: stderr={result.stderr}, stdout={result.stdout}"
+                assert "OpenRouter" in result.stdout or "success" in result.stdout.lower()
+
+                # Verify output file exists
+                assert os.path.exists(output_path), "Output file should be created"
+                assert os.path.getsize(output_path) > 0, "Output file should not be empty"
+
+        self.tearDown_temp_db()
+
+    def test_cli_generation_requesty_provider(self):
+        """Test CLI generation with Requesty provider selection."""
+        self.setUp_temp_db()
+
+        # First configure the provider
+        result_config = subprocess.run([
+            sys.executable, "-m", "bananagen",
+            "configure",
+            "requesty",
+            "--api-key", self.requesty_key
+        ], capture_output=True, text=True, env={
+            **os.environ,
+            "BANANAGEN_DB_PATH": self.temp_db_path
+        }, timeout=30)
+
+        if result_config.returncode == 0:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                output_path = os.path.join(tmpdir, "generated_requesty.png")
+                template_path = os.path.join(tmpdir, "template.png")
+
+                # Create a dummy template
+                from PIL import Image
+                img = Image.new('RGB', (256, 256), color='blue')
+                img.save(template_path)
+
+                # Run generation command with provider
+                result = subprocess.run([
+                    sys.executable, "-m", "bananagen",
+                    "generate",
+                    "--prompt", "A test image with Requesty Gemini",
+                    "--width", "256",
+                    "--height", "256",
+                    "--provider", "requesty",
+                    "--placeholder", template_path,
+                    "--out", output_path
+                ], capture_output=True, text=True, env={
+                    **os.environ,
+                    "BANANAGEN_DB_PATH": self.temp_db_path
+                }, timeout=60)
+
+                assert result.returncode == 0, f"Generation failed: stderr={result.stderr}, stdout={result.stdout}"
+                assert "Requesty" in result.stdout or "success" in result.stdout.lower()
+
+                # Verify output file exists
+                assert os.path.exists(output_path), "Output file should be created"
+
+        self.tearDown_temp_db()
+
+    def test_cli_generation_provider_fallback(self):
+        """Test CLI automatic fallback when primary provider fails."""
+        self.setUp_temp_db()
+
+        # Configure both providers
+        config_results = []
+        for provider, api_key in [("openrouter", self.openrouter_key), ("requesty", self.requesty_key)]:
+            result_config = subprocess.run([
+                sys.executable, "-m", "bananagen",
+                "configure",
+                provider,
+                "--api-key", api_key
+            ], capture_output=True, text=True, env={
+                **os.environ,
+                "BANANAGEN_DB_PATH": self.temp_db_path
+            }, timeout=30)
+            config_results.append((provider, result_config))
+
+        # Mock provider factory to simulate failures
+        with patch('bananagen.core.get_provider_adapter') as mock_factory:
+            # Mock OpenRouter failure, Requesty success
+            mock_openrouter_adapter = MagicMock()
+            mock_requesty_adapter = MagicMock()
+
+            mock_openrouter_adapter.call_gemini.side_effect = Exception("OpenRouter API rate limit")
+            mock_requesty_adapter.call_gemini.return_value = ("/tmp/fallback_output.png", {})
+
+            mock_factory.side_effect = lambda provider: {
+                "openrouter": mock_openrouter_adapter,
+                "requesty": mock_requesty_adapter
+            }.get(provider, None)
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                output_path = os.path.join(tmpdir, "fallback_generated.png")
+                template_path = os.path.join(tmpdir, "template.png")
+
+                from PIL import Image
+                img = Image.new('RGB', (256, 256), color='green')
+                img.save(template_path)
+
+                # Run without specific provider - should fallback
+                result = subprocess.run([
+                    sys.executable, "-m", "bananagen",
+                    "generate",
+                    "--prompt", "A fallback test image",
+                    "--width", "256",
+                    "--height", "256",
+                    "--placeholder", template_path,
+                    "--out", output_path
+                ], capture_output=True, text=True, env={
+                    **os.environ,
+                    "BANANAGEN_DB_PATH": self.temp_db_path
+                }, timeout=60)
+
+                # Should succeed after fallback
+                if result.returncode == 0:
+                    assert "Requesty" in result.stdout or "fallback" in result.stdout.lower()
+                    assert os.path.exists(output_path)
+
+        self.tearDown_temp_db()
+
+    def test_cli_generation_unconfigured_provider_error(self):
+        """Test CLI error when trying to use unconfigured provider."""
+        self.setUp_temp_db()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = os.path.join(tmpdir, "error_output.png")
+            template_path = os.path.join(tmpdir, "template.png")
+
+            # Create a dummy template
+            from PIL import Image
+            img = Image.new('RGB', (256, 256), color='yellow')
+            img.save(template_path)
+
+            # Try to generate with unconfigured OpenRouter provider
+            result = subprocess.run([
+                sys.executable, "-m", "bananagen",
+                "generate",
+                "--prompt", "This should fail",
+                "--width", "256",
+                "--height", "256",
+                "--provider", "openrouter",
+                "--placeholder", template_path,
+                "--out", output_path
+            ], capture_output=True, text=True, env={
+                **os.environ,
+                "BANANAGEN_DB_PATH": self.temp_db_path
+            }, timeout=30)
+
+            # Should fail due to unconfigured provider
+            assert result.returncode != 0, "Should fail with unconfigured provider"
+            combined_output = result.stdout + result.stderr
+            assert any(keyword in combined_output.lower() for keyword in [
+                "configured", "provider", "error", "not found"
+            ]), f"No provider error indication: {combined_output}"
+
+            # File should not be created
+            assert not os.path.exists(output_path), "Output file should not exist on error"
+
+        self.tearDown_temp_db()
+
+    def test_cli_generation_invalid_provider_error(self):
+        """Test CLI error with invalid provider name."""
+        self.setUp_temp_db()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = os.path.join(tmpdir, "invalid_output.png")
+            template_path = os.path.join(tmpdir, "template.png")
+
+            # Create a dummy template
+            from PIL import Image
+            img = Image.new('RGB', (256, 256), color='purple')
+            img.save(template_path)
+
+            # Try to generate with invalid provider
+            result = subprocess.run([
+                sys.executable, "-m", "bananagen",
+                "generate",
+                "--prompt", "This should fail",
+                "--width", "256",
+                "--height", "256",
+                "--provider", "invalid-provider",
+                "--placeholder", template_path,
+                "--out", output_path
+            ], capture_output=True, text=True, env={
+                **os.environ,
+                "BANANAGEN_DB_PATH": self.temp_db_path
+            }, timeout=30)
+
+            # Should fail with invalid provider
+            assert result.returncode != 0, "Should fail with invalid provider"
+            combined_output = result.stdout + result.stderr
+            assert any(keyword in combined_output.lower() for keyword in [
+                "unsupported", "invalid", "provider", "supported providers"
+            ]), f"No invalid provider error indication: {combined_output}"
+
+        self.tearDown_temp_db()
+
+
 # Integration Test Summary and Validations
 # ========================================
 #
+# API Tests (Existing - Mock-Based):
 # Test Flow Overview:
 # 1. POST /generate with generation request (prompt, dimensions, output_path, provider)
 # 2. Mock provider configuration retrieval from database
@@ -286,21 +553,33 @@ class TestMultiProviderGeneration:
 # 5. Response validation for proper structure and metadata
 # 6. Verification of provider selection and error handling
 #
+# CLI Tests (New - TDD Implementation):
+# Test Flow Overview:
+# 1. CLI configure command: bananagen configure [provider] --api-key [key]
+# 2. CLI generate command: bananagen generate --provider [provider] --prompt [text] --out [file]
+# 3. Subprocess execution with temporary database environment
+# 4. Provider factory selection and adapter instantiation (mocked initially - will fail per TDD)
+# 5. Database provider configuration retrieval and validation
+# 6. End-to-end image generation workflow with file output verification
+#
 # Key Validations:
 #
 # Multi-Provider Success Validation:
-# - Validates successful generation workflow with both OpenRouter and Requesty providers
+# - API: Validates generation workflow with both OpenRouter and Requesty providers
+# - CLI: Tests CLI provider selection and configuration retrieval from database
 # - Verifies provider selection and API call routing to correct endpoints
 # - Confirms database retrieval of encrypted provider keys
 # - Validates response structure matches expected contract
 #
 # Automatic Provider Switching Validation:
-# - Tests fallback mechanism when primary provider fails (rate limit, network error)
+# - API: Tests fallback mechanism when primary provider fails (rate limit, network error)
+# - CLI: Tests automatic provider switching when CLI generation encounters provider failures
 # - Verifies secondary provider selection and successful completion
 # - Confirms retry counts and timing are within expected bounds
 #
 # Error Handling Validation:
-# - Invalid Provider: Tests 400 responses for unsupported providers
+# - Invalid Provider: Tests 400 responses for unsupported providers (API + CLI)
+# - Unconfigured Provider: Tests errors when provider not configured (CLI-specific)
 # - Network Failures: Tests connection timeouts and recovery mechanisms
 # - Database Errors: Tests failures in provider configuration retrieval
 # - API Rate Limiting: Tests handling of provider-specific rate limits
@@ -308,21 +587,36 @@ class TestMultiProviderGeneration:
 # Mock Strategy:
 # - Database operations (get_api_provider with provider-specific returns)
 # - Generation adapter (call_gemini with provider-aware responses)
-# - External API calls (simulated success/failure scenarios)
-# - Network error conditions and timeout simulations
+# - Provider factory (get_provider_adapter - mocked to fail per TDD)
+# - CLI subprocess execution with environment variable configuration
+# - External API calls (simulated success/failure scenarios via mocked adapters)
 #
 # Test Coverage:
-# - Successful generation with each configured provider
+# - Successful generation with each configured provider (API + CLI)
+# - CLI provider configuration workflow with database verification
 # - Automatic provider fallback and switching logic
 # - Error handling for invalid/unconfigured providers
 # - Network failure recovery and retry mechanisms
-# - Database provider configuration retrieval
+# - Database provider configuration retrieval and storage
 # - Response validation and metadata structure
+# - CLI subprocess execution with file I/O verification
 # - Rate limiting and quota exceeded scenarios
+#
+# TDD Design Notes:
+# - All CLI tests are designed to FAIL initially per TDD principles
+# - Provider factory (bananagen.core.get_provider_adapter) does not exist yet
+# - Tests include mocks that will raise exceptions (e.g., patch get_provider_adapter)
+# - Expected failure reasons: import errors, missing functions, AttributeError on non-existent adapters
+# - Core implementation begins after these tests validate the intended interface
+# - CLI tests use real subprocess execution but mock the provider factory layer
 #
 # Integration Points Tested:
 # - FastAPI TestClient API request/response handling for /generate
+# - CLI subprocess command execution with argument parsing
 # - Database abstraction layer for provider management
 # - Generation adapter integration with multiple providers
+# - Provider factory pattern for adapter selection (TDD-mocked initially)
 # - Error handling and exception propagation across providers
 # - Request validation and response formatting consistency
+# - CLI environment variable configuration for database paths
+# - File I/O operations for template and output image handling

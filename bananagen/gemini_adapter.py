@@ -6,17 +6,24 @@ from PIL import Image
 import google.generativeai as genai
 import logging
 
+from bananagen.db import Database
+
 logger = logging.getLogger(__name__)
 
-async def call_gemini(template_path: str, prompt: str, model: str = "nano-banana-2.5-flash", params: dict = None):
+async def call_gemini(template_path: str, prompt: str, model: str = "nano-banana-2.5-flash", params: dict = None, provider: str = None):
     """Call Gemini to generate image from template and prompt."""
     try:
         logger.info("Starting Gemini call", extra={
             "template_path": template_path,
             "prompt": prompt[:50] + '...' if len(prompt) > 50 else prompt,
             "model": model,
-            "has_params": params is not None
+            "has_params": params is not None,
+            "provider": provider
         })
+
+        # Handle provider-specific logic
+        if provider and provider.lower() != "gemini":
+            return await _call_provider_adapter(template_path, prompt, model, params, provider)
 
         if not template_path or not os.path.exists(template_path):
             raise FileNotFoundError(f"Template file does not exist: {template_path}")
@@ -40,6 +47,77 @@ async def call_gemini(template_path: str, prompt: str, model: str = "nano-banana
             "prompt": prompt[:30] + '...' if len(prompt) > 30 else prompt
         })
         raise
+
+
+async def _call_provider_adapter(template_path: str, prompt: str, model: str, params: dict = None, provider: str = None):
+    """Call the appropriate provider adapter based on provider name."""
+    try:
+        logger.info("Initializing provider adapter", extra={"provider": provider})
+
+        # Validate provider
+        valid_providers = ['openrouter', 'requesty']
+        if provider.lower() not in valid_providers:
+            raise ValueError(f"Unsupported provider '{provider}'. Supported providers: {', '.join(valid_providers + ['gemini'])}")
+
+        # Initialize database connection
+        db = Database()
+
+        # Validate provider configuration
+        try:
+            provider_record = db.get_api_provider(provider)
+            if not provider_record:
+                raise ValueError(f"Provider '{provider}' is not configured. Please configure it first.")
+            if not provider_record.is_active:
+                raise ValueError(f"Provider '{provider}' is not active.")
+        except Exception as e:
+            logger.error("Provider validation failed", extra={"provider": provider, "error": str(e)})
+            raise ValueError(f"Provider validation failed: {e}")
+
+        # Get API key for the provider
+        try:
+            api_keys = db.get_api_keys_for_provider(provider_record.id)
+            if not api_keys:
+                raise ValueError(f"No API key configured for provider '{provider}'.")
+            api_key_encrypted = api_keys[0].key_value  # Use first active key
+        except Exception as e:
+            logger.error("Failed to retrieve API key", extra={"provider": provider, "error": str(e)})
+            raise ValueError(f"Failed to retrieve API key: {e}")
+
+        # Import the appropriate adapter
+        if provider.lower() == 'openrouter':
+            from bananagen.adapters.openrouter_adapter import OpenRouterAdapter
+            adapter = OpenRouterAdapter(
+                base_url=provider_record.base_url,
+                api_key_encrypted=api_key_encrypted,
+                provider_details=provider_record.settings or {}
+            )
+        elif provider.lower() == 'requesty':
+            from bananagen.adapters.requesty_adapter import RequestyAdapter
+            adapter = RequestyAdapter(
+                base_url=provider_record.base_url,
+                api_key_encrypted=api_key_encrypted,
+                provider_details=provider_record.settings or {}
+            )
+
+        # Call the adapter
+        logger.info("Calling provider adapter", extra={"provider": provider, "model": model})
+        result_path, metadata = await adapter.call_gemini(template_path, prompt, model, params or {})
+
+        # Update metadata with provider info
+        metadata["provider"] = provider.lower()
+        metadata["model_name"] = model
+
+        return result_path, metadata
+
+    except Exception as e:
+        logger.error("Provider adapter call failed", extra={
+            "provider": provider,
+            "template_path": template_path,
+            "error": str(e),
+            "error_type": type(e).__name__
+        })
+        raise
+
 
 async def mock_generate(template_path: str, prompt: str, params: dict = None):
     """Mock generation for testing."""

@@ -2,12 +2,17 @@ import click
 import logging
 import os
 import hashlib
+import re
+import uuid
 from pathlib import Path
 from datetime import datetime
-from .core import generate_placeholder
+from typing import Optional, Dict, Any
+from .core import generate_placeholder, encrypt_key
 from .gemini_adapter import call_gemini
 from .logging_config import configure_logging
-from .db import Database
+from .db import Database, GenerationRecord, APIProviderRecord, APIKeyRecord
+from .models.api_provider import APIProvider
+from .models.api_key import APIKey
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +63,160 @@ def validate_concurrency(value: str) -> int:
     """Validate concurrency is positive integer."""
     return validate_positive_int(value, "Concurrency")
 
+def validate_endpoint_url(value: str) -> str:
+    """Validate that value is a valid URL endpoint."""
+    if not value or not value.strip():
+        raise click.BadParameter("Endpoint URL cannot be empty")
+
+    value = value.strip()
+
+    # Basic URL pattern validation
+    url_pattern = re.compile(
+        r'^https?://'  # http:// or https://
+        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'  # domain...
+        r'localhost|'  # localhost...
+        r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # ...or ip
+        r'(?::\d+)?'  # optional port
+        r'(?:/?|[/?]\S+)$', re.IGNORECASE)
+
+    if not url_pattern.match(value):
+        raise click.BadParameter(f"Invalid endpoint URL format: {value}. Must be a valid HTTP/HTTPS URL.")
+
+    return value
+
+def validate_model_name(value: str) -> str:
+    """Validate model name is non-empty."""
+    if not value or not value.strip():
+        raise click.BadParameter("Model name cannot be empty")
+    return value.strip()
+
+def get_provider_choice() -> str:
+    """Get user's choice for provider configuration."""
+    click.echo("\nProvider Configuration:")
+    click.echo("1. Configure a new provider")
+    click.echo("2. Update an existing provider")
+
+    choice = click.prompt("Choose an option", type=click.Choice(['1', '2']), show_choices=False)
+    return choice
+
+def list_existing_providers(db: Database) -> Optional[str]:
+    """List existing providers and let user choose one to update."""
+    providers = db.list_active_api_providers()
+
+    if not providers:
+        click.echo("No existing providers found.")
+        return None
+
+    click.echo("\nAvailable providers:")
+    for i, provider in enumerate(providers, 1):
+        click.echo(f"{i}. {provider.display_name} ({provider.name}) - {provider.endpoint_url}")
+
+    choice = click.prompt(
+        f"Choose a provider to update (1-{len(providers)})",
+        type=click.IntRange(1, len(providers))
+    )
+
+    return providers[choice - 1].name
+
+def prompt_provider_details(existing_provider: Optional[APIProviderRecord] = None) -> Dict[str, Any]:
+    """Prompt user for provider configuration details."""
+    if existing_provider:
+        click.echo(f"\nUpdating provider: {existing_provider.display_name}")
+
+        # Use existing values as defaults
+        current_name = existing_provider.name
+        current_endpoint = existing_provider.endpoint_url
+        current_model = existing_provider.model_name or ""
+        current_base_url = existing_provider.base_url or current_endpoint
+    else:
+        current_name = current_endpoint = current_model = current_base_url = ""
+
+    # Provider name
+    provider_name = click.prompt(
+        "Provider name",
+        default=current_name,
+        value_proc=lambda x: x.strip().lower()
+    ).strip().lower()
+
+    if not provider_name:
+        raise click.BadParameter("Provider name cannot be empty")
+
+    # Validate provider name format to prevent SQL injection and other issues
+    if not re.match(r'^[a-z0-9_-]+$', provider_name):
+        raise click.BadParameter("Provider name can only contain lowercase letters, numbers, hyphens, and underscores")
+
+    # Endpoint URL
+    endpoint_url = click.prompt(
+        "Endpoint URL",
+        default=current_endpoint,
+        value_proc=validate_endpoint_url
+    )
+
+    # Model name
+    model_name = click.prompt(
+        "Model name",
+        default=current_model,
+        value_proc=validate_model_name
+    )
+
+    # Base URL (optional)
+    base_url = click.prompt(
+        "Base URL (leave empty for same as endpoint)",
+        default=current_base_url if current_base_url != current_endpoint else "",
+        show_default=False
+    ).strip()
+
+    if not base_url:
+        base_url = endpoint_url
+
+    return {
+        'name': provider_name,
+        'display_name': provider_name.title(),
+        'endpoint_url': endpoint_url,
+        'model_name': model_name,
+        'base_url': base_url,
+        'auth_type': 'bearer'  # Default auth type
+    }
+
+def prompt_api_key() -> str:
+    """Prompt for API key with confirmation."""
+    import getpass
+
+    while True:
+        api_key = getpass.getpass("Enter API key: ")
+        if not api_key or not api_key.strip():
+            click.echo("API key cannot be empty. Please try again.")
+            continue
+
+        # Basic API key validation - should only contain safe characters
+        api_key = api_key.strip()
+        if not all(c.isalnum() or c in '._-' for c in api_key):
+            click.echo("API key contains invalid characters. Only alphanumeric characters, dots, underscores, and hyphens are allowed.")
+            continue
+
+        if len(api_key) < 10:
+            click.echo("API key seems too short (less than 10 characters). Please verify and try again.")
+            continue
+
+        confirm_key = getpass.getpass("Confirm API key: ")
+        if api_key == confirm_key:
+            return api_key
+        else:
+            click.echo("API keys don't match. Please try again.")
+            if not click.confirm("Try entering the API key again?"):
+                raise click.Abort()
+
+def confirm_configuration(details: Dict[str, Any]) -> bool:
+    """Show configuration summary and ask for confirmation."""
+    click.echo("\nConfiguration Summary:")
+    click.echo(f"  Provider: {details['display_name']} ({details['name']})")
+    click.echo(f"  Endpoint: {details['endpoint_url']}")
+    click.echo(f"  Model: {details['model_name']}")
+    click.echo(f"  Base URL: {details['base_url']}")
+    click.echo(f"  Auth Type: {details['auth_type']}")
+
+    return click.confirm("Do you want to save this configuration?")
+
 @click.group()
 @click.option('--log-level', default='INFO', help='Set logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)')
 def main(log_level):
@@ -105,6 +264,7 @@ def placeholder(width, height, color, transparent, out_path):
         raise click.ClickException(f"Failed to generate placeholder: {e}")
 
 @main.command()
+@click.option('--provider', default='gemini', type=click.Choice(['gemini', 'openrouter', 'requesty']), help='AI provider to use for generation')
 @click.option('--placeholder', 'template_path', help='Placeholder image path', callback=lambda ctx, param, value: validate_file_path(value, must_exist=True) if value else None)
 @click.option('--prompt', required=True, help='Generation prompt')
 @click.option('--width', help='Image width (if no placeholder)', callback=lambda ctx, param, value: validate_positive_int(value, 'width') if value else None)
@@ -113,8 +273,8 @@ def placeholder(width, height, color, transparent, out_path):
 @click.option('--json', is_flag=True, help='Output JSON')
 @click.option('--force', is_flag=True, help='Force re-generation even if cached result exists')
 @click.option('--seed', type=int, help='Optional integer seed for reproducible Gemini generation')
-def generate(template_path, prompt, width, height, out_path, json, force, seed):
-    """Generate images using Gemini"""
+def generate(provider, template_path, prompt, width, height, out_path, json, force, seed):
+    """Generate images using selected AI provider"""
     import asyncio
     import uuid
     from datetime import datetime
@@ -144,21 +304,42 @@ def generate(template_path, prompt, width, height, out_path, json, force, seed):
         seed = seed
 
         try:
+            # Validate provider and check configuration
+            if provider not in ['gemini', 'openrouter', 'requesty']:
+                raise click.BadParameter(f"Unsupported provider '{provider}'. Supported providers: gemini, openrouter, requesty")
+    
+            # Check if provider is configured (for non-gemini providers)
+            if provider != 'gemini':
+                db = Database("bananagen.db")
+                try:
+                    provider_record = db.get_api_provider(provider)
+                    if not provider_record:
+                        from .db import Database
+                        raise click.ClickException(f"Error: Provider '{provider}' not configured. Run 'bananagen configure --provider {provider}' to set up API key.")
+    
+                    api_keys = db.get_api_keys_for_provider(provider_record.id)
+                    if not api_keys:
+                        raise click.ClickException(f"Error: Provider '{provider}' not configured. Run 'bananagen configure --provider {provider}' to set up API key.")
+                except Exception as e:
+                    if "not configured" not in str(e):
+                        logger.error("Database error checking provider configuration", extra={"provider": provider, "error": str(e)})
+                        raise click.ClickException(f"Error: Unable to verify provider configuration: {e}")
+    
             # Generate placeholder if needed
             if not template_path:
                 template_path = out_path.replace(".png", "_placeholder.png")
                 logger.info("Generating placeholder image", extra={"template_path": template_path, "width": width or 512, "height": height or 512})
                 generate_placeholder(width or 512, height or 512, out_path=template_path)
-
+    
             # Compute SHA256 for caching
             with open(template_path, 'rb') as f:
                 template_bytes = f.read()
             params_dict = {"seed": seed} if seed is not None else {}
             sha_input = prompt.encode('utf-8') + template_bytes + str(params_dict).encode('utf-8')
             input_sha = hashlib.sha256(sha_input).hexdigest()
-
-            logger.info("Computed input SHA", extra={"input_sha": input_sha, "template_path": template_path})
-
+    
+            logger.info("Computed input SHA", extra={"input_sha": input_sha, "template_path": template_path, "provider": provider})
+    
             # Check cache
             db = Database("bananagen.db")
             cached_generation = db.get_generation_by_sha(input_sha)
@@ -171,26 +352,45 @@ def generate(template_path, prompt, width, height, out_path, json, force, seed):
                     import json as json_lib
                     cached_metadata = cached_generation.metadata or {}
                     cached_metadata["input_sha256"] = input_sha
+                    cached_metadata["provider"] = provider
                     click.echo(json_lib.dumps({
                         "id": cached_generation.id,
                         "status": "cached",
                         "out_path": out_path,
+                        "provider": provider,
                         "created_at": cached_generation.created_at.isoformat(),
                         "sha256": cached_metadata.get("sha256", ""),
                         "input_sha256": input_sha
                     }))
                 else:
                     click.echo(f"Using cached image saved to {out_path}")
-
+    
                 logger.info("Cached generation completed", extra={
                     "generation_id": cached_generation.id,
                     "out_path": out_path,
-                    "status": "cached"
+                    "status": "cached",
+                    "provider": provider
                 })
                 return
-
+    
             # Cache miss or force, proceed with generation
-            logger.info("Cache miss, generating new", extra={"input_sha": input_sha, "force": force})
+            logger.info("Cache miss, generating new", extra={"input_sha": input_sha, "force": force, "provider": provider})
+    
+            # For now, only support gemini - other providers will need adapter implementation
+            # TODO: Remove this check once provider adapters are fully implemented
+            if provider != 'gemini':
+                # Check if provider is configured (this is already done above)
+                pass  # Removed the error - trust the validation above
+
+            # Determine model based on provider
+            if provider == 'openrouter':
+                model_name = 'google/gemini-1.5-flash'  # OpenRouter uses this format
+            elif provider == 'requesty':
+                model_name = 'google/gemini-1.5-flash'  # Requesty uses this format
+            else:  # gemini
+                model_name = 'gemini-2.5-flash'
+
+            logger.info("Using model", extra={"provider": provider, "model": model_name})
 
             # Create GenerationRecord and save to DB
             record = GenerationRecord(
@@ -199,15 +399,15 @@ def generate(template_path, prompt, width, height, out_path, json, force, seed):
                 width=width or 512,
                 height=height or 512,
                 output_path=out_path,
-                model="gemini-2.5-flash",  # default
+                model=model_name,
                 status="processing",
                 created_at=datetime.now(),
                 sha256=input_sha
             )
             db.save_generation(record)
 
-            logger.info("Calling Gemini API", extra={"generation_id": generation_id, "template_path": template_path, "params": params_dict})
-            generated_path, metadata = await call_gemini(template_path, prompt, params=params_dict)
+            logger.info("Calling Gemini API", extra={"generation_id": generation_id, "template_path": template_path, "params": params_dict, "provider": provider, "model": model_name})
+            generated_path, metadata = await call_gemini(template_path, prompt, model=model_name, params=params_dict, provider=provider)
 
             # For now, just copy to out_path
             import shutil
@@ -226,16 +426,18 @@ def generate(template_path, prompt, width, height, out_path, json, force, seed):
                 click.echo(json_lib.dumps({
                     "id": generation_id,
                     "status": "done",
+                    "provider": provider,
                     "out_path": out_path,
                     "created_at": datetime.now().isoformat(),
                     "sha256": metadata["sha256"],
                     "input_sha256": input_sha
                 }))
             else:
-                click.echo(f"Generated image saved to {out_path}")
+                click.echo(f"Generated image using {provider} saved to {out_path}")
 
             logger.info("Generation completed successfully", extra={
                 "generation_id": generation_id,
+                "provider": provider,
                 "out_path": out_path,
                 "sha256": metadata["sha256"],
                 "input_sha256": input_sha
@@ -497,7 +699,7 @@ def status(id, json):
         if not id or not str(id).strip():
             raise click.BadParameter("Job ID cannot be empty")
 
-        from .db import Database
+        from .db import Database, APIProviderRecord, APIKeyRecord
 
         logger.info("Checking job status", extra={"job_id": id, "json": json})
 
@@ -556,6 +758,198 @@ def status(id, json):
             "job_id": id
         })
         raise click.ClickException(f"Failed to check job status: {e}")
+
+@main.command()
+@click.option('--provider', help='Specific provider to configure (skips interactive choice)')
+@click.option('--non-interactive', is_flag=True, help='Skip interactive prompts, require --api-key')
+@click.option('--api-key', help='API key value (required with --non-interactive)')
+@click.option('--update-only', is_flag=True, help='Only allow updating existing providers')
+def configure(provider, non_interactive, api_key, update_only):
+    """Configure API provider settings with interactive prompts"""
+    try:
+        logger.info("Starting provider configuration", extra={
+            "provider": provider,
+            "non_interactive": non_interactive,
+            "has_api_key": bool(api_key),
+            "update_only": update_only
+        })
+
+        db = Database("bananagen.db")
+
+        # Check for encryption function
+        has_encryption = callable(encrypt_key)
+
+        existing_provider = None
+
+        # Handle non-interactive mode
+        if non_interactive:
+            if not provider:
+                raise click.BadParameter("--provider is required in non-interactive mode")
+            if not api_key:
+                raise click.BadParameter("--api-key is required in non-interactive mode")
+
+            # Get or create provider record
+            existing_provider = db.get_api_provider(provider)
+            if not existing_provider and update_only:
+                raise click.BadParameter(f"Provider '{provider}' not found. Use --update-only=False to create new providers.")
+
+        # Interactive configuration flow
+        elif not provider:
+            try:
+                if update_only:
+                    # Only allow updating existing providers
+                    provider_name = list_existing_providers(db)
+                    if not provider_name:
+                        click.echo("No providers available to update.")
+                        return
+                else:
+                    # Ask user what they want to do
+                    choice = get_provider_choice()
+
+                    if choice == '1':  # Configure new provider
+                        existing_provider = None
+                    else:  # Update existing provider
+                        provider_name = list_existing_providers(db)
+                        if provider_name:
+                            existing_provider = db.get_api_provider(provider_name)
+                        else:
+                            click.echo("No existing providers found.")
+                            return
+            except Exception as e:
+                logger.error("Error during provider selection", extra={"error": str(e)})
+                raise click.ClickException(f"Error selecting provider: {e}")
+        else:
+            # Provider specified via --provider option
+            try:
+                existing_provider = db.get_api_provider(provider)
+            except Exception as e:
+                logger.error("Error retrieving provider", extra={"provider": provider, "error": str(e)})
+                raise click.ClickException(f"Error retrieving provider '{provider}': {e}")
+
+        # Get provider configuration details
+        if non_interactive and existing_provider:
+            # Non-interactive mode with existing provider - use current details
+            provider_details = {
+                'name': existing_provider.name,
+                'display_name': existing_provider.display_name,
+                'endpoint_url': existing_provider.endpoint_url,
+                'model_name': existing_provider.model_name or "",
+                'base_url': existing_provider.base_url or existing_provider.endpoint_url,
+                'auth_type': existing_provider.auth_type
+            }
+        elif non_interactive and not existing_provider and provider:
+            # Non-interactive mode creating new provider from command line
+            # Validate the provided provider name first
+            if not re.match(r'^[a-z0-9_-]+$', provider):
+                raise click.BadParameter("Provider name can only contain lowercase letters, numbers, hyphens, and underscores")
+
+            provider_details = {
+                'name': provider,
+                'display_name': provider.title(),
+                'endpoint_url': f'https://api.{provider}.com/v1',  # Default endpoint
+                'model_name': f'{provider}-default-model',  # Default model
+                'base_url': f'https://api.{provider}.com/v1',  # Default base URL
+                'auth_type': 'bearer'
+            }
+        else:
+            # Interactive mode
+            provider_details = prompt_provider_details(existing_provider)
+
+        # Handle API key
+        if non_interactive:
+            if not api_key:
+                raise click.BadParameter("API key is required in non-interactive mode")
+            final_api_key = api_key
+        else:
+            final_api_key = prompt_api_key()
+
+        # Confirmation (skip in non-interactive mode)
+        if not non_interactive:
+            if not confirm_configuration(provider_details):
+                click.echo("Configuration cancelled.")
+                return
+
+        # Save provider configuration
+        try:
+            provider_record = existing_provider or APIProviderRecord(
+                id=f"prov_{provider_details['name']}_{str(uuid.uuid4())[:8]}",
+                name=provider_details['name'],
+                display_name=provider_details['display_name'],
+                endpoint_url=provider_details['endpoint_url'],
+                auth_type=provider_details['auth_type'],
+                model_name=provider_details['model_name'],
+                base_url=provider_details['base_url'],
+                created_at=datetime.now(),
+                updated_at=datetime.now()
+            )
+
+            # Update timestamps if updating existing provider
+            if existing_provider:
+                provider_record.updated_at = datetime.now()
+                provider_record.settings = existing_provider.settings
+
+            db.save_api_provider(provider_record)
+            action = "Updated" if existing_provider else "Created"
+            logger.info(f"{action.lower()} provider record", extra={
+                "provider": provider_details['name'],
+                "id": provider_record.id,
+                "action": action.lower()
+            })
+        except Exception as e:
+            logger.error("Failed to save provider to database", extra={
+                "provider": provider_details['name'],
+                "error": str(e),
+                "error_type": type(e).__name__
+            })
+            raise click.ClickException(f"Failed to save provider configuration to database: {e}")
+
+        # Encrypt and save API key
+        if has_encryption:
+            encrypted_key = encrypt_key(final_api_key)
+        else:
+            encrypted_key = final_api_key
+            logger.warning("API key encryption not available, storing in plaintext")
+
+        # Check if API key already exists for this provider
+        existing_keys = db.get_api_keys_for_provider(provider_record.id)
+        if existing_keys:
+            # Update existing key
+            key_record = existing_keys[0]
+            key_record.key_value = encrypted_key
+            key_record.updated_at = datetime.now()
+        else:
+            # Create new key
+            key_record = APIKeyRecord(
+                id=f"key_{str(uuid.uuid4())}",
+                provider_id=provider_record.id,
+                key_value=encrypted_key,
+                created_at=datetime.now(),
+                updated_at=datetime.now()
+            )
+
+        db.save_api_key(key_record)
+        logger.info("API key configured", extra={
+            "provider": provider_details['name'],
+            "key_id": key_record.id,
+            "has_encryption": has_encryption
+        })
+
+        click.echo(f"✓ Provider '{provider_details['display_name']}' configured successfully!")
+        if not has_encryption:
+            click.echo("⚠ Warning: API key was stored without encryption. Please ensure your database is secure.")
+
+    except Exception as e:
+        logger.error("Configuration failed", extra={
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "provider": provider
+        })
+        click.echo(f"❌ Error: {e}", err=True)
+        raise click.ClickException(f"Failed to configure provider: {e}")
+
+
+# Interactive configuration functions are now integrated into the configure command
+
 
 if __name__ == '__main__':
     main()

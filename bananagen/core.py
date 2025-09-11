@@ -2,10 +2,9 @@ from PIL import Image
 import logging
 import os
 import base64
+from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.backends import default_backend
 
 logger = logging.getLogger(__name__)
 
@@ -37,12 +36,13 @@ def generate_placeholder(width: int, height: int, color: str = "#ffffff", transp
     return img
 
 
-def _get_encryption_key() -> bytes:
+def _get_encryption_key() -> str:
     """Get or derive the master encryption key."""
     env_key = os.getenv("BANANAGEN_ENCRYPTION_KEY")
     if env_key:
         logger.debug("Using encryption key from environment variable")
-        return env_key.encode('utf-8').ljust(32, b'\0')[:32]  # Ensure 32 bytes
+        key = env_key.encode('utf-8').ljust(32, b'\0')[:32]
+        return base64.urlsafe_b64encode(key).decode()
 
     # Derive from project name
     project_name = "bananagen"
@@ -52,31 +52,26 @@ def _get_encryption_key() -> bytes:
         length=32,
         salt=salt,
         iterations=100000,
-        backend=default_backend()
     )
     key = kdf.derive(project_name.encode('utf-8'))
     logger.debug("Derived encryption key from project name")
-    return key
+    return base64.urlsafe_b64encode(key).decode()
 
 
 def encrypt_key(key: str) -> str:
-    """Encrypt an API key string securely using AES-GCM.
+    """Encrypt an API key string securely using AES-Fernet.
 
     Args:
         key: The plain text API key to encrypt.
 
     Returns:
-        Base64-encoded encrypted key string.
+        Fernet token string.
     """
     try:
         logger.info("Encrypting API key", extra={"key_length": len(key)})
         encryption_key = _get_encryption_key()
-        iv = os.urandom(12)  # GCM requires 12-byte IV
-        cipher = Cipher(algorithms.AES(encryption_key), modes.GCM(iv), backend=default_backend())
-        encryptor = cipher.encryptor()
-        ciphertext = encryptor.update(key.encode('utf-8')) + encryptor.finalize()
-        encrypted = iv + encryptor.tag + ciphertext  # Store IV, tag, ciphertext
-        result = base64.b64encode(encrypted).decode('utf-8')
+        f = Fernet(encryption_key.encode())
+        result = f.encrypt(key.encode('utf-8')).decode('utf-8')
         logger.debug("API key encrypted successfully", extra={"encrypted_length": len(result)})
         return result
     except Exception as e:
@@ -85,10 +80,10 @@ def encrypt_key(key: str) -> str:
 
 
 def decrypt_key(encrypted: str) -> str:
-    """Decrypt an encrypted API key string using AES-GCM.
+    """Decrypt an encrypted API key string using AES-Fernet.
 
     Args:
-        encrypted: The base64-encoded encrypted key string.
+        encrypted: The Fernet token string.
 
     Returns:
         The plain text API key.
@@ -96,18 +91,14 @@ def decrypt_key(encrypted: str) -> str:
     try:
         logger.info("Decrypting API key", extra={"encrypted_length": len(encrypted)})
         encryption_key = _get_encryption_key()
-        data = base64.b64decode(encrypted)
-        if len(data) < 28:  # IV + tag + at least 1 byte ciphertext
-            raise ValueError("Invalid encrypted data")
-        iv = data[:12]
-        tag = data[12:28]
-        ciphertext = data[28:]
-        cipher = Cipher(algorithms.AES(encryption_key), modes.GCM(iv, tag), backend=default_backend())
-        decryptor = cipher.decryptor()
-        plaintext = decryptor.update(ciphertext) + decryptor.finalize()
-        result = plaintext.decode('utf-8')
+        f = Fernet(encryption_key.encode())
+        result = f.decrypt(encrypted.encode()).decode('utf-8')
         logger.debug("API key decrypted successfully", extra={"key_length": len(result)})
         return result
+    except InvalidToken:
+        # Assume backward compatibility: if not Fernet encrypted, treat as plain
+        logger.info("Key does not appear encrypted, assuming plain text", extra={"key_length": len(encrypted)})
+        return encrypted
     except Exception as e:
         logger.error("Failed to decrypt API key", extra={"error": str(e), "error_type": type(e).__name__})
         raise Exception(f"Decryption failed: {e}")
