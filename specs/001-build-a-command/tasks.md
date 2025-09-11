@@ -68,18 +68,18 @@
 - [x] T009 [P] Write example snippets showing how roo code or Claude Code should call bananagen. Files: docs/agent_integration.md. Acceptance: Clear examples in README.
 
 ## Phase 3.4: Integration
-- [ ] T019 Connect Gemini adapter to real API with environment variables
-- [ ] T020 Add async processing and background tasks to API
-- [ ] T021 Implement rate limiting and exponential backoff
-- [ ] T022 Add structured logging throughout application
-- [ ] T023 Add error handling and validation
+- [x] T019 Connect Gemini adapter to real API with environment variables
+- [x] T020 Add async processing and background tasks to API
+- [x] T021 Implement rate limiting and exponential backoff
+- [x] T022 Add structured logging throughout application
+- [x] T023 Add error handling and validation
 
 ## Phase 3.5: Polish
-- [ ] T024 [P] Implement caching, SHA-based re-use, --force, and --seed support in CLI. Add structured logging and --log-level. Acceptance: cache hits are used when identical prompt+params+size exist unless --force is used.
+- [x] T024 [P] Implement caching, SHA-based re-use, --force, and --seed support in CLI. Add structured logging and --log-level. Acceptance: cache hits are used when identical prompt+params+size exist unless --force is used.
 - [ ] T025 [P] Add comprehensive unit tests for all modules. Files: tests/unit/test_*.py. Acceptance: >90% code coverage.
 - [ ] T026 Performance optimization and benchmarking
-- [ ] T027 [P] Update README.md with complete usage examples and API documentation
-- [ ] T028 Package for distribution with Poetry
+- [x] T027 [P] Update README.md with complete usage examples and API documentation
+- [x] T028 Package for distribution with Poetry
 - [ ] T029 Create release workflow and CI/CD pipeline
 
 ## Dependencies

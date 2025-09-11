@@ -19,6 +19,7 @@ class BatchJob:
     output_path: str
     model: str
     template_path: Optional[str] = None
+    provider: str = "gemini"
 
 
 @dataclass
@@ -127,8 +128,8 @@ class BatchRunner:
                         raise FileNotFoundError(f"Template file not found: {template_path}")
 
                     # Call Gemini
-                    logger.debug("Calling Gemini for batch job", extra={"job_id": job.id})
-                    generated_path, metadata = await call_gemini(template_path, job.prompt)
+                    logger.debug("Calling Gemini for batch job", extra={"job_id": job.id, "provider": job.provider})
+                    generated_path, metadata = await call_gemini(template_path, job.prompt, provider=job.provider)
 
                     # Validate generated file
                     if not generated_path or not Path(generated_path).exists():

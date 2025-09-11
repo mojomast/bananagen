@@ -5,6 +5,7 @@ from datetime import datetime
 import json
 import uuid
 import logging
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -57,10 +58,12 @@ class APIProviderRecord:
     display_name: str
     endpoint_url: str
     auth_type: str
-    model_name: Optional[str] = None
-    is_active: bool = True
     created_at: datetime
     updated_at: datetime
+    model_name: Optional[str] = None
+    base_url: Optional[str] = None
+    settings: Optional[dict] = None
+    is_active: bool = True
 
 
 @dataclass
@@ -68,11 +71,12 @@ class APIKeyRecord:
     id: str
     provider_id: str
     key_value: str  # encrypted
+    created_at: datetime
+    updated_at: datetime
+    description: Optional[str] = None
     environment: str = "default"
     is_active: bool = True
     last_used_at: Optional[datetime] = None
-    created_at: datetime
-    updated_at: datetime
 
 
 class Database:
@@ -146,16 +150,28 @@ class Database:
                     endpoint_url TEXT NOT NULL,
                     auth_type TEXT NOT NULL,
                     model_name TEXT,
+                    base_url TEXT,
+                    settings TEXT,
                     is_active BOOLEAN DEFAULT 1,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+            # Add new columns if not exists
+            try:
+                conn.execute('ALTER TABLE api_providers ADD COLUMN base_url TEXT')
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute('ALTER TABLE api_providers ADD COLUMN settings TEXT')
+            except sqlite3.OperationalError:
+                pass
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS api_keys (
                     id TEXT PRIMARY KEY,
                     provider_id TEXT NOT NULL,
                     key_value TEXT NOT NULL,
+                    description TEXT,
                     environment TEXT DEFAULT 'default',
                     is_active BOOLEAN DEFAULT 1,
                     last_used_at DATETIME,
@@ -164,6 +180,11 @@ class Database:
                     FOREIGN KEY (provider_id) REFERENCES api_providers(id)
                 )
             ''')
+            # Add description column if not exists for existing databases
+            try:
+                conn.execute('ALTER TABLE api_keys ADD COLUMN description TEXT')
+            except sqlite3.OperationalError:
+                pass  # Column already exists
             # Create indexes for performance
             try:
                 conn.execute('CREATE INDEX IF NOT EXISTS idx_api_providers_name ON api_providers(name)')
@@ -471,8 +492,8 @@ class Database:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute('''
                 INSERT OR REPLACE INTO api_providers
-                (id, name, display_name, endpoint_url, auth_type, model_name, is_active, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (id, name, display_name, endpoint_url, auth_type, model_name, base_url, settings, is_active, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 record.id,
                 record.name,
@@ -480,18 +501,22 @@ class Database:
                 record.endpoint_url,
                 record.auth_type,
                 record.model_name,
+                record.base_url,
+                json.dumps(record.settings) if record.settings else None,
                 record.is_active,
                 record.created_at.isoformat(),
                 record.updated_at.isoformat()
             ))
 
-    def get_api_provider(self, provider_id: str) -> Optional[APIProviderRecord]:
-        """Get an API provider record by ID."""
+    def get_api_provider(self, provider_name_or_id: str) -> Optional[APIProviderRecord]:
+        """Get an API provider record by name or ID."""
         with sqlite3.connect(self.db_path) as conn:
-            row = conn.execute('SELECT * FROM api_providers WHERE id = ?', (provider_id,)).fetchone()
+            # Try looking up by name first
+            row = conn.execute('SELECT * FROM api_providers WHERE name = ?', (provider_name_or_id,)).fetchone()
             if row:
                 created_at = datetime.fromisoformat(row[7]) if row[7] else None
                 updated_at = datetime.fromisoformat(row[8]) if row[8] else None
+                settings = json.loads(row[10]) if row[10] else None
                 return APIProviderRecord(
                     id=row[0],
                     name=row[1],
@@ -499,10 +524,33 @@ class Database:
                     endpoint_url=row[3],
                     auth_type=row[4],
                     model_name=row[5],
+                    base_url=row[9],
+                    settings=settings,
                     is_active=bool(row[6]),
                     created_at=created_at,
                     updated_at=updated_at
                 )
+
+            # If not found, try looking up by ID
+            row = conn.execute('SELECT * FROM api_providers WHERE id = ?', (provider_name_or_id,)).fetchone()
+            if row:
+                created_at = datetime.fromisoformat(row[7]) if row[7] else None
+                updated_at = datetime.fromisoformat(row[8]) if row[8] else None
+                settings = json.loads(row[10]) if row[10] else None
+                return APIProviderRecord(
+                    id=row[0],
+                    name=row[1],
+                    display_name=row[2],
+                    endpoint_url=row[3],
+                    auth_type=row[4],
+                    model_name=row[5],
+                    base_url=row[9],
+                    settings=settings,
+                    is_active=bool(row[6]),
+                    created_at=created_at,
+                    updated_at=updated_at
+                )
+            return None
         return None
 
     def list_active_api_providers(self) -> List[APIProviderRecord]:
@@ -513,6 +561,7 @@ class Database:
             for row in rows:
                 created_at = datetime.fromisoformat(row[7]) if row[7] else None
                 updated_at = datetime.fromisoformat(row[8]) if row[8] else None
+                settings = json.loads(row[10]) if row[10] else None
                 providers.append(APIProviderRecord(
                     id=row[0],
                     name=row[1],
@@ -520,6 +569,8 @@ class Database:
                     endpoint_url=row[3],
                     auth_type=row[4],
                     model_name=row[5],
+                    base_url=row[9],
+                    settings=settings,
                     is_active=bool(row[6]),
                     created_at=created_at,
                     updated_at=updated_at
@@ -531,12 +582,13 @@ class Database:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute('''
                 INSERT OR REPLACE INTO api_keys
-                (id, provider_id, key_value, environment, is_active, last_used_at, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (id, provider_id, key_value, description, environment, is_active, last_used_at, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 record.id,
                 record.provider_id,
                 record.key_value,  # should be encrypted
+                record.description,
                 record.environment,
                 record.is_active,
                 record.last_used_at.isoformat() if record.last_used_at else None,
@@ -549,15 +601,16 @@ class Database:
         with sqlite3.connect(self.db_path) as conn:
             row = conn.execute('SELECT * FROM api_keys WHERE id = ?', (key_id,)).fetchone()
             if row:
-                created_at = datetime.fromisoformat(row[6]) if row[6] else None
-                updated_at = datetime.fromisoformat(row[7]) if row[7] else None
-                last_used_at = datetime.fromisoformat(row[5]) if row[5] else None
+                created_at = datetime.fromisoformat(row[7]) if row[7] else None
+                updated_at = datetime.fromisoformat(row[8]) if row[8] else None
+                last_used_at = datetime.fromisoformat(row[6]) if row[6] else None
                 return APIKeyRecord(
                     id=row[0],
                     provider_id=row[1],
                     key_value=row[2],
-                    environment=row[3],
-                    is_active=bool(row[4]),
+                    description=row[3],
+                    environment=row[4],
+                    is_active=bool(row[5]),
                     last_used_at=last_used_at,
                     created_at=created_at,
                     updated_at=updated_at
@@ -573,15 +626,16 @@ class Database:
             ).fetchall()
             keys = []
             for row in rows:
-                created_at = datetime.fromisoformat(row[6]) if row[6] else None
-                updated_at = datetime.fromisoformat(row[7]) if row[7] else None
-                last_used_at = datetime.fromisoformat(row[5]) if row[5] else None
+                created_at = datetime.fromisoformat(row[7]) if row[7] else None
+                updated_at = datetime.fromisoformat(row[8]) if row[8] else None
+                last_used_at = datetime.fromisoformat(row[6]) if row[6] else None
                 keys.append(APIKeyRecord(
                     id=row[0],
                     provider_id=row[1],
                     key_value=row[2],
-                    environment=row[3],
-                    is_active=bool(row[4]),
+                    description=row[3],
+                    environment=row[4],
+                    is_active=bool(row[5]),
                     last_used_at=last_used_at,
                     created_at=created_at,
                     updated_at=updated_at

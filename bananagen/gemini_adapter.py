@@ -5,18 +5,29 @@ import hashlib
 from PIL import Image
 import google.generativeai as genai
 import logging
+from dotenv import load_dotenv
+
+from bananagen.db import Database
+
+# Load environment variables from .env file
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-async def call_gemini(template_path: str, prompt: str, model: str = "nano-banana-2.5-flash", params: dict = None):
+async def call_gemini(template_path: str, prompt: str, model: str = "nano-banana-2.5-flash", params: dict = None, provider: str = None):
     """Call Gemini to generate image from template and prompt."""
     try:
         logger.info("Starting Gemini call", extra={
             "template_path": template_path,
             "prompt": prompt[:50] + '...' if len(prompt) > 50 else prompt,
             "model": model,
-            "has_params": params is not None
+            "has_params": params is not None,
+            "provider": provider
         })
+
+        # Handle provider-specific logic
+        if provider and provider.lower() != "gemini":
+            return await _call_provider_adapter(template_path, prompt, model, params, provider)
 
         if not template_path or not os.path.exists(template_path):
             raise FileNotFoundError(f"Template file does not exist: {template_path}")
@@ -24,7 +35,7 @@ async def call_gemini(template_path: str, prompt: str, model: str = "nano-banana
         if not prompt or not prompt.strip():
             raise ValueError("Prompt cannot be empty")
 
-        api_key = os.getenv("NANO_BANANA_API_KEY") or os.getenv("GEMINI_API_KEY")
+        api_key = os.getenv("NANO_BANANA_API_KEY") or os.getenv("GEMINI_API_KEY") or os.getenv("OPENROUTER_API_KEY") or os.getenv("REQUESTY_API_KEY")
 
         if not api_key:
             logger.warning("No API key found, using mock mode", extra={"template_path": template_path})
@@ -40,6 +51,105 @@ async def call_gemini(template_path: str, prompt: str, model: str = "nano-banana
             "prompt": prompt[:30] + '...' if len(prompt) > 30 else prompt
         })
         raise
+
+
+async def _call_provider_adapter(template_path: str, prompt: str, model: str, params: dict = None, provider: str = None):
+    """Call the appropriate provider adapter based on provider name."""
+    try:
+        logger.info("Initializing provider adapter", extra={"provider": provider})
+
+        # Validate provider
+        valid_providers = ['openrouter', 'requesty']
+        if provider.lower() not in valid_providers:
+            raise ValueError(f"Unsupported provider '{provider}'. Supported providers: {', '.join(valid_providers + ['gemini'])}")
+
+        # Initialize database connection
+        db = Database("bananagen.db")
+
+        # Validate provider configuration - allow environment-only configuration
+        provider_record = None
+        try:
+            provider_record = db.get_api_provider(provider)
+            if provider_record and not provider_record.is_active:
+                raise ValueError(f"Provider '{provider}' is not active.")
+        except Exception as e:
+            # If provider not in database, check if we have environment variables
+            if provider.lower() == 'openrouter' and os.getenv('OPENROUTER_API_KEY'):
+                logger.info("Using OpenRouter with environment variables", extra={"provider": provider})
+                provider_record = None  # Will use env vars
+            elif provider.lower() == 'requesty' and os.getenv('REQUESTY_API_KEY'):
+                logger.info("Using Requesty with environment variables", extra={"provider": provider})
+                provider_record = None  # Will use env vars
+            else:
+                logger.error("Provider validation failed", extra={"provider": provider, "error": str(e)})
+                raise ValueError(f"Provider validation failed: {e}")
+
+        # Get API key - try environment first, then database
+        api_key_encrypted = None
+        
+        # Check environment variables first
+        if provider.lower() == 'requesty':
+            env_api_key = os.getenv('REQUESTY_API_KEY')
+            if env_api_key:
+                # No encryption needed for env vars
+                api_key_encrypted = None
+        elif provider.lower() == 'openrouter':
+            env_api_key = os.getenv('OPENROUTER_API_KEY')
+            if env_api_key:
+                api_key_encrypted = None
+        
+        # Fall back to database if no env var and provider_record exists
+        if not api_key_encrypted and not env_api_key and provider_record:
+            try:
+                api_keys = db.get_api_keys_for_provider(provider_record.id)
+                if api_keys:
+                    api_key_encrypted = api_keys[0].key_value  # Use first active key
+                else:
+                    logger.warning(f"No API key found for provider '{provider}' in database or environment")
+            except Exception as e:
+                logger.error("Failed to retrieve API key from database", extra={"provider": provider, "error": str(e)})
+
+        # Import the appropriate adapter
+        if provider.lower() == 'openrouter':
+            from bananagen.adapters.openrouter_adapter import OpenRouterAdapter
+            adapter = OpenRouterAdapter(
+                base_url=provider_record.base_url if provider_record else None,
+                api_key_encrypted=api_key_encrypted,
+                provider_details={
+                    **(provider_record.settings or {} if provider_record else {}),
+                    "model_name": provider_record.model_name if provider_record else os.getenv('OPENROUTER_MODEL', 'google/gemini-2.5-flash-image-preview')
+                }
+            )
+        elif provider.lower() == 'requesty':
+            from bananagen.adapters.requesty_adapter import RequestyAdapter
+            adapter = RequestyAdapter(
+                base_url=provider_record.base_url if provider_record else None,
+                api_key_encrypted=api_key_encrypted,
+                provider_details={
+                    **(provider_record.settings or {} if provider_record else {}),
+                    "model_name": provider_record.model_name if provider_record else os.getenv('REQUESTY_MODEL', 'coding/gemini-2.5-flash')
+                }
+            )
+
+        # Call the adapter
+        logger.info("Calling provider adapter", extra={"provider": provider, "model": model})
+        result_path, metadata = await adapter.call_gemini(template_path, prompt, model, params or {})
+
+        # Update metadata with provider info
+        metadata["provider"] = provider.lower()
+        metadata["model_name"] = model
+
+        return result_path, metadata
+
+    except Exception as e:
+        logger.error("Provider adapter call failed", extra={
+            "provider": provider,
+            "template_path": template_path,
+            "error": str(e),
+            "error_type": type(e).__name__
+        })
+        raise
+
 
 async def mock_generate(template_path: str, prompt: str, params: dict = None):
     """Mock generation for testing."""
@@ -115,7 +225,17 @@ async def real_generate(template_path: str, prompt: str, model: str = "nano-bana
 
         for attempt in range(max_retries + 1):
             try:
-                logger.info(f"Gemini API call attempt {attempt + 1}/{max_retries + 1}")
+                logger.info(f"Gemini API call attempt {attempt + 1}/{max_retries + 1}", extra={
+                    "model": model,
+                    "template_path": template_path,
+                    "prompt_preview": prompt[:50] + '...' if len(prompt) > 50 else prompt,
+                    "params": params,
+                    "generation_config": {
+                        "temperature": 0.7,
+                        "candidate_count": 1,
+                        "seed": int(params['seed']) if params and 'seed' in params and params['seed'] is not None else None
+                    } if params and 'seed' in params and params['seed'] is not None else None
+                })
 
                 def _call():
                     try:
@@ -140,14 +260,45 @@ async def real_generate(template_path: str, prompt: str, model: str = "nano-bana
                         response = m.generate_content([img_part, prompt], generation_config=generation_config)
                         return response
                     except Exception as inner_e:
-                        logger.error("Gemini API call error", extra={"error": str(inner_e)})
+                        logger.error("Gemini API call error", extra={
+                            "error": str(inner_e),
+                            "error_type": type(inner_e).__name__,
+                            "model": model,
+                            "template_path": template_path,
+                            "attempt": attempt + 1,
+                            "max_retries": max_retries + 1,
+                            "traceback": __import__('traceback').format_exc()
+                        })
                         raise inner_e
 
                 response = await asyncio.to_thread(_call)
 
                 if hasattr(response, 'text'):
                     generated_text = response.text
-                    logger.debug("Gemini response received", extra={"response_length": len(generated_text)})
+                    logger.debug("Gemini response received", extra={
+                        "response_length": len(generated_text),
+                        "response_preview": generated_text[:100] + '...' if len(generated_text) > 100 else generated_text,
+                        "response_id": getattr(response, 'response_id', 'unknown'),
+                        "model": getattr(response, 'model_version', 'unknown'),
+                        "candidates_count": len(getattr(response, 'candidates', [])),
+                        "usage_metadata": getattr(response, 'usage_metadata', {}),
+                        "full_response": {
+                            "text": generated_text,
+                            "response_id": getattr(response, 'response_id', 'unknown'),
+                            "model_version": getattr(response, 'model_version', 'unknown'),
+                            "candidates": [{
+                                "content": {
+                                    "parts": [{"text": part.text} for part in candidate.content.parts] if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts') else []
+                                },
+                                "finish_reason": getattr(candidate, 'finish_reason', 'unknown')
+                            } for candidate in getattr(response, 'candidates', [])],
+                            "usage_metadata": {
+                                "prompt_token_count": getattr(response.usage_metadata, 'prompt_token_count', 0) if hasattr(response, 'usage_metadata') and response.usage_metadata else 0,
+                                "candidates_token_count": getattr(response.usage_metadata, 'candidates_token_count', 0) if hasattr(response, 'usage_metadata') and response.usage_metadata else 0,
+                                "total_token_count": getattr(response.usage_metadata, 'total_token_count', 0) if hasattr(response, 'usage_metadata') and response.usage_metadata else 0
+                            } if hasattr(response, 'usage_metadata') and response.usage_metadata else {}
+                        }
+                    })
                 else:
                     generated_text = "No text response"
                     logger.warning("Gemini response missing text field")
@@ -199,7 +350,10 @@ async def real_generate(template_path: str, prompt: str, model: str = "nano-bana
                     "error": str(e),
                     "error_type": type(e).__name__,
                     "attempt": attempt + 1,
-                    "max_retries": max_retries
+                    "max_retries": max_retries,
+                    "model": model,
+                    "template_path": template_path,
+                    "traceback": __import__('traceback').format_exc()
                 })
 
                 if attempt == max_retries:
@@ -212,7 +366,13 @@ async def real_generate(template_path: str, prompt: str, model: str = "nano-bana
 
         # All retries failed
         error_msg = f"Gemini API call failed after {max_retries + 1} attempts: {str(last_error)}"
-        logger.error("All Gemini API attempts failed", extra={"final_error": str(last_error)})
+        logger.error("All Gemini API attempts failed", extra={
+            "final_error": str(last_error),
+            "error_type": type(last_error).__name__ if last_error else 'unknown',
+            "model": model,
+            "template_path": template_path,
+            "total_attempts": max_retries + 1
+        })
         raise Exception(error_msg)
 
     except Exception as e:
@@ -220,6 +380,7 @@ async def real_generate(template_path: str, prompt: str, model: str = "nano-bana
             "template_path": template_path,
             "model": model,
             "error": str(e),
-            "error_type": type(e).__name__
+            "error_type": type(e).__name__,
+            "traceback": __import__('traceback').format_exc()
         })
         raise
