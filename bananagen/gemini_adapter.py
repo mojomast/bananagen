@@ -60,7 +60,7 @@ async def _call_provider_adapter(template_path: str, prompt: str, model: str, pa
             raise ValueError(f"Unsupported provider '{provider}'. Supported providers: {', '.join(valid_providers + ['gemini'])}")
 
         # Initialize database connection
-        db = Database()
+        db = Database("bananagen.db")
 
         # Validate provider configuration
         try:
@@ -89,14 +89,20 @@ async def _call_provider_adapter(template_path: str, prompt: str, model: str, pa
             adapter = OpenRouterAdapter(
                 base_url=provider_record.base_url,
                 api_key_encrypted=api_key_encrypted,
-                provider_details=provider_record.settings or {}
+                provider_details={
+                    **(provider_record.settings or {}),
+                    "model_name": provider_record.model_name
+                }
             )
         elif provider.lower() == 'requesty':
             from bananagen.adapters.requesty_adapter import RequestyAdapter
             adapter = RequestyAdapter(
                 base_url=provider_record.base_url,
                 api_key_encrypted=api_key_encrypted,
-                provider_details=provider_record.settings or {}
+                provider_details={
+                    **(provider_record.settings or {}),
+                    "model_name": provider_record.model_name
+                }
             )
 
         # Call the adapter

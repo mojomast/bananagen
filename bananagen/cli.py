@@ -190,9 +190,6 @@ def prompt_api_key() -> str:
 
         # Basic API key validation - should only contain safe characters
         api_key = api_key.strip()
-        if not all(c.isalnum() or c in '._-' for c in api_key):
-            click.echo("API key contains invalid characters. Only alphanumeric characters, dots, underscores, and hyphens are allowed.")
-            continue
 
         if len(api_key) < 10:
             click.echo("API key seems too short (less than 10 characters). Please verify and try again.")
@@ -222,9 +219,26 @@ def confirm_configuration(details: Dict[str, Any]) -> bool:
 def main(log_level):
     """Bananagen CLI"""
     try:
-        # Validate environment variables
-        if not os.getenv('NANO_BANANA_API_KEY') and not os.getenv('GEMINI_API_KEY'):
-            logger.warning("No API key found. Set NANO_BANANA_API_KEY or GEMINI_API_KEY environment variable for real API access.")
+        # Check for API keys (configured providers only - Gemini env vars commented out)
+        # has_env_keys = bool(os.getenv('NANO_BANANA_API_KEY') or os.getenv('GEMINI_API_KEY'))
+        has_configured_providers = False
+        
+        try:
+            db = Database("bananagen.db")
+            providers = db.get_all_api_providers()
+            for provider in providers:
+                if provider.is_active:
+                    api_keys = db.get_api_keys_for_provider(provider.id)
+                    if api_keys:
+                        has_configured_providers = True
+                        break
+        except Exception:
+            # If database check fails, continue without configured providers
+            pass
+        
+        if not has_configured_providers:
+            logger.warning("No API provider configured. Configure a provider with 'bananagen configure' for real API access.")
+        
         configure_logging(log_level)
         logger.info("CLI initialized", extra={"log_level": log_level})
     except Exception as e:
@@ -264,7 +278,7 @@ def placeholder(width, height, color, transparent, out_path):
         raise click.ClickException(f"Failed to generate placeholder: {e}")
 
 @main.command()
-@click.option('--provider', default='gemini', type=click.Choice(['gemini', 'openrouter', 'requesty']), help='AI provider to use for generation')
+@click.option('--provider', type=click.Choice(['requesty', 'openrouter']), help='AI provider to use for generation (auto-selects if not specified)')
 @click.option('--placeholder', 'template_path', help='Placeholder image path', callback=lambda ctx, param, value: validate_file_path(value, must_exist=True) if value else None)
 @click.option('--prompt', required=True, help='Generation prompt')
 @click.option('--width', help='Image width (if no placeholder)', callback=lambda ctx, param, value: validate_positive_int(value, 'width') if value else None)
@@ -282,7 +296,12 @@ def generate(provider, template_path, prompt, width, height, out_path, json, for
     if not prompt or not prompt.strip():
         raise click.BadParameter("Prompt cannot be empty")
 
+    # Set default provider if not specified - commenting out Gemini for now
+    if provider is None:
+        provider = 'requesty'  # Changed from 'gemini' to 'requesty'
+
     logger.info("Starting generate command", extra={
+        "provider": provider,
         "template_path": template_path,
         "prompt": prompt[:50] + '...' if len(prompt) > 50 else prompt,
         "width": width,
@@ -294,53 +313,62 @@ def generate(provider, template_path, prompt, width, height, out_path, json, for
     })
 
     async def _generate():
+        from .db import Database
         generation_id = str(uuid.uuid4())
 
         logger.info("Initializing generation", extra={"generation_id": generation_id})
 
-        # Initialize template_path for proper scoping
-        template_path = template_path
-        force = force
-        seed = seed
-
         try:
-            # Validate provider and check configuration
-            if provider not in ['gemini', 'openrouter', 'requesty']:
-                raise click.BadParameter(f"Unsupported provider '{provider}'. Supported providers: gemini, openrouter, requesty")
+            # Auto-select provider - Gemini commented out for now
+            selected_provider = provider
+            # if provider == 'gemini' and not (os.getenv('NANO_BANANA_API_KEY') or os.getenv('GEMINI_API_KEY')):
+            #     # Try to find a configured provider
+            #     db = Database("bananagen.db")
+            #     try:
+            #         providers = db.list_active_api_providers()
+            #         for prov in providers:
+            #             if prov.is_active and prov.name in ['openrouter', 'requesty']:
+            #                 api_keys = db.get_api_keys_for_provider(prov.id)
+            #                 if api_keys:
+            #                     selected_provider = prov.name
+            #                     logger.info("Auto-selected configured provider", extra={"provider": selected_provider})
+            #                     break
+            #     except Exception as e:
+            #         logger.debug("Could not auto-select provider", extra={"error": str(e)})
+            
+            # Validate provider and check configuration - Gemini commented out
+            if selected_provider not in ['openrouter', 'requesty']:  # removed 'gemini'
+                raise click.BadParameter(f"Unsupported provider '{selected_provider}'. Supported providers: openrouter, requesty")
     
-            # Check if provider is configured (for non-gemini providers)
-            if provider != 'gemini':
+            # Check if provider is configured
+            # if selected_provider != 'gemini':  # All providers now need configuration
                 db = Database("bananagen.db")
                 try:
-                    provider_record = db.get_api_provider(provider)
+                    provider_record = db.get_api_provider(selected_provider)
                     if not provider_record:
-                        from .db import Database
-                        raise click.ClickException(f"Error: Provider '{provider}' not configured. Run 'bananagen configure --provider {provider}' to set up API key.")
-    
+                        raise click.ClickException(f"Error: Provider '{selected_provider}' not configured. Run 'bananagen configure --provider {selected_provider}' to set up API key.")
+
                     api_keys = db.get_api_keys_for_provider(provider_record.id)
                     if not api_keys:
-                        raise click.ClickException(f"Error: Provider '{provider}' not configured. Run 'bananagen configure --provider {provider}' to set up API key.")
+                        raise click.ClickException(f"Error: Provider '{selected_provider}' not configured. Run 'bananagen configure --provider {selected_provider}' to set up API key.")
                 except Exception as e:
                     if "not configured" not in str(e):
-                        logger.error("Database error checking provider configuration", extra={"provider": provider, "error": str(e)})
-                        raise click.ClickException(f"Error: Unable to verify provider configuration: {e}")
-    
-            # Generate placeholder if needed
-            if not template_path:
-                template_path = out_path.replace(".png", "_placeholder.png")
-                logger.info("Generating placeholder image", extra={"template_path": template_path, "width": width or 512, "height": height or 512})
-                generate_placeholder(width or 512, height or 512, out_path=template_path)
+                        logger.error("Database error checking provider configuration", extra={"provider": selected_provider, "error": str(e)})
+                        raise click.ClickException(f"Error: Unable to verify provider configuration: {e}")            # Generate placeholder if needed
+            actual_template_path = template_path
+            if not actual_template_path:
+                actual_template_path = out_path.replace(".png", "_placeholder.png")
+                logger.info("Generating placeholder image", extra={"template_path": actual_template_path, "width": width or 512, "height": height or 512})
+                generate_placeholder(width or 512, height or 512, out_path=actual_template_path)
     
             # Compute SHA256 for caching
-            with open(template_path, 'rb') as f:
+            with open(actual_template_path, 'rb') as f:
                 template_bytes = f.read()
             params_dict = {"seed": seed} if seed is not None else {}
             sha_input = prompt.encode('utf-8') + template_bytes + str(params_dict).encode('utf-8')
             input_sha = hashlib.sha256(sha_input).hexdigest()
-    
-            logger.info("Computed input SHA", extra={"input_sha": input_sha, "template_path": template_path, "provider": provider})
-    
-            # Check cache
+
+            logger.info("Computed input SHA", extra={"input_sha": input_sha, "template_path": actual_template_path, "provider": provider})            # Check cache
             db = Database("bananagen.db")
             cached_generation = db.get_generation_by_sha(input_sha)
             if cached_generation and not force:
@@ -352,12 +380,12 @@ def generate(provider, template_path, prompt, width, height, out_path, json, for
                     import json as json_lib
                     cached_metadata = cached_generation.metadata or {}
                     cached_metadata["input_sha256"] = input_sha
-                    cached_metadata["provider"] = provider
+                    cached_metadata["provider"] = selected_provider
                     click.echo(json_lib.dumps({
                         "id": cached_generation.id,
                         "status": "cached",
                         "out_path": out_path,
-                        "provider": provider,
+                        "provider": selected_provider,
                         "created_at": cached_generation.created_at.isoformat(),
                         "sha256": cached_metadata.get("sha256", ""),
                         "input_sha256": input_sha
@@ -369,28 +397,27 @@ def generate(provider, template_path, prompt, width, height, out_path, json, for
                     "generation_id": cached_generation.id,
                     "out_path": out_path,
                     "status": "cached",
-                    "provider": provider
+                    "provider": selected_provider
                 })
                 return
     
             # Cache miss or force, proceed with generation
-            logger.info("Cache miss, generating new", extra={"input_sha": input_sha, "force": force, "provider": provider})
+            logger.info("Cache miss, generating new", extra={"input_sha": input_sha, "force": force, "provider": selected_provider})
     
-            # For now, only support gemini - other providers will need adapter implementation
-            # TODO: Remove this check once provider adapters are fully implemented
-            if provider != 'gemini':
-                # Check if provider is configured (this is already done above)
-                pass  # Removed the error - trust the validation above
+            # Provider adapters are now implemented - Gemini commented out for now
 
-            # Determine model based on provider
-            if provider == 'openrouter':
+            # Determine model based on provider - Gemini commented out
+            if selected_provider == 'openrouter':
                 model_name = 'google/gemini-1.5-flash'  # OpenRouter uses this format
-            elif provider == 'requesty':
-                model_name = 'google/gemini-1.5-flash'  # Requesty uses this format
-            else:  # gemini
-                model_name = 'gemini-2.5-flash'
+            elif selected_provider == 'requesty':
+                model_name = 'coding/gemini-2.5-flash'  # Requesty uses this format
+            # else:  # gemini - commented out
+            #     model_name = 'gemini-2.5-flash'
+            else:
+                # Fallback for any other provider
+                model_name = 'coding/gemini-2.5-flash'
 
-            logger.info("Using model", extra={"provider": provider, "model": model_name})
+            logger.info("Using model", extra={"provider": selected_provider, "model": model_name})
 
             # Create GenerationRecord and save to DB
             record = GenerationRecord(
@@ -406,8 +433,8 @@ def generate(provider, template_path, prompt, width, height, out_path, json, for
             )
             db.save_generation(record)
 
-            logger.info("Calling Gemini API", extra={"generation_id": generation_id, "template_path": template_path, "params": params_dict, "provider": provider, "model": model_name})
-            generated_path, metadata = await call_gemini(template_path, prompt, model=model_name, params=params_dict, provider=provider)
+            logger.info("Calling Gemini API", extra={"generation_id": generation_id, "template_path": actual_template_path, "params": params_dict, "provider": selected_provider, "model": model_name})
+            generated_path, metadata = await call_gemini(actual_template_path, prompt, model=model_name, params=params_dict, provider=selected_provider)
 
             # For now, just copy to out_path
             import shutil
@@ -426,18 +453,18 @@ def generate(provider, template_path, prompt, width, height, out_path, json, for
                 click.echo(json_lib.dumps({
                     "id": generation_id,
                     "status": "done",
-                    "provider": provider,
+                    "provider": selected_provider,
                     "out_path": out_path,
                     "created_at": datetime.now().isoformat(),
                     "sha256": metadata["sha256"],
                     "input_sha256": input_sha
                 }))
             else:
-                click.echo(f"Generated image using {provider} saved to {out_path}")
+                click.echo(f"Generated image using {selected_provider} saved to {out_path}")
 
             logger.info("Generation completed successfully", extra={
                 "generation_id": generation_id,
-                "provider": provider,
+                "provider": selected_provider,
                 "out_path": out_path,
                 "sha256": metadata["sha256"],
                 "input_sha256": input_sha
@@ -447,7 +474,7 @@ def generate(provider, template_path, prompt, width, height, out_path, json, for
                 "generation_id": generation_id,
                 "error": str(e),
                 "error_type": type(e).__name__,
-                "template_path": template_path,
+                "template_path": actual_template_path if 'actual_template_path' in locals() else template_path,
                 "out_path": out_path
             })
             click.echo(f"Error generating image: {e}", err=True)

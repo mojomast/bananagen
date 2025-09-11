@@ -72,7 +72,7 @@
 ## Phase 3.5: Polish
 - [ ] T020 [P] Unit tests for API provider models in `c:\Users\kyle\projects\bananagen\tests\unit\test_api_provider_model.py`
 - [ ] T021 [P] Unit tests for provider adapters in `c:\Users\kyle\projects\bananagen\tests\unit\test_provider_adapters.py`
-- [ ] T022 [P] Unit tests for CLI provider options in `c:\Users\kyle\projects\bananagen\tests\unit\test_cli_provider.py`
+- [x] T022 [P] Unit tests for CLI provider options in `c:\Users\kyle\projects\bananagen\tests\unit\test_cli_provider.py`
 - [ ] T023 Performance tests for multi-provider generation in `c:\Users\kyle\projects\bananagen\tests\performance\test_provider_performance.py`
 - [ ] T024 [P] Update CLI help documentation in `c:\Users\kyle\projects\bananagen\bananagen\cli.py`
 - [ ] T025 [P] Update README.md with multi-provider examples

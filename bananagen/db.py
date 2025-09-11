@@ -514,9 +514,9 @@ class Database:
             # Try looking up by name first
             row = conn.execute('SELECT * FROM api_providers WHERE name = ?', (provider_name_or_id,)).fetchone()
             if row:
-                created_at = datetime.fromisoformat(row[9]) if row[9] else None
-                updated_at = datetime.fromisoformat(row[10]) if row[10] else None
-                settings = json.loads(row[7]) if row[7] else None
+                created_at = datetime.fromisoformat(row[7]) if row[7] else None
+                updated_at = datetime.fromisoformat(row[8]) if row[8] else None
+                settings = json.loads(row[10]) if row[10] else None
                 return APIProviderRecord(
                     id=row[0],
                     name=row[1],
@@ -524,9 +524,9 @@ class Database:
                     endpoint_url=row[3],
                     auth_type=row[4],
                     model_name=row[5],
-                    base_url=row[6],
+                    base_url=row[9],
                     settings=settings,
-                    is_active=bool(row[8]),
+                    is_active=bool(row[6]),
                     created_at=created_at,
                     updated_at=updated_at
                 )
@@ -534,9 +534,9 @@ class Database:
             # If not found, try looking up by ID
             row = conn.execute('SELECT * FROM api_providers WHERE id = ?', (provider_name_or_id,)).fetchone()
             if row:
-                created_at = datetime.fromisoformat(row[9]) if row[9] else None
-                updated_at = datetime.fromisoformat(row[10]) if row[10] else None
-                settings = json.loads(row[7]) if row[7] else None
+                created_at = datetime.fromisoformat(row[7]) if row[7] else None
+                updated_at = datetime.fromisoformat(row[8]) if row[8] else None
+                settings = json.loads(row[10]) if row[10] else None
                 return APIProviderRecord(
                     id=row[0],
                     name=row[1],
@@ -544,30 +544,13 @@ class Database:
                     endpoint_url=row[3],
                     auth_type=row[4],
                     model_name=row[5],
-                    base_url=row[6],
+                    base_url=row[9],
                     settings=settings,
-                    is_active=bool(row[8]),
+                    is_active=bool(row[6]),
                     created_at=created_at,
                     updated_at=updated_at
                 )
             return None
-            if row:
-                created_at = datetime.fromisoformat(row[9]) if row[9] else None
-                updated_at = datetime.fromisoformat(row[10]) if row[10] else None
-                settings = json.loads(row[7]) if row[7] else None
-                return APIProviderRecord(
-                    id=row[0],
-                    name=row[1],
-                    display_name=row[2],
-                    endpoint_url=row[3],
-                    auth_type=row[4],
-                    model_name=row[5],
-                    base_url=row[6],
-                    settings=settings,
-                    is_active=bool(row[8]),
-                    created_at=created_at,
-                    updated_at=updated_at
-                )
         return None
 
     def list_active_api_providers(self) -> List[APIProviderRecord]:
@@ -576,9 +559,9 @@ class Database:
             rows = conn.execute('SELECT * FROM api_providers WHERE is_active = 1').fetchall()
             providers = []
             for row in rows:
-                created_at = datetime.fromisoformat(row[9]) if row[9] else None
-                updated_at = datetime.fromisoformat(row[10]) if row[10] else None
-                settings = json.loads(row[7]) if row[7] else None
+                created_at = datetime.fromisoformat(row[7]) if row[7] else None
+                updated_at = datetime.fromisoformat(row[8]) if row[8] else None
+                settings = json.loads(row[10]) if row[10] else None
                 providers.append(APIProviderRecord(
                     id=row[0],
                     name=row[1],
@@ -586,9 +569,9 @@ class Database:
                     endpoint_url=row[3],
                     auth_type=row[4],
                     model_name=row[5],
-                    base_url=row[6],
+                    base_url=row[9],
                     settings=settings,
-                    is_active=bool(row[8]),
+                    is_active=bool(row[6]),
                     created_at=created_at,
                     updated_at=updated_at
                 ))

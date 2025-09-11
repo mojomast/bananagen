@@ -31,13 +31,13 @@ def validate_environment():
     if missing_vars:
         logger.warning("Missing environment variables", extra={
             "missing_vars": missing_vars,
-            "message": "Some optional environment variables are missing, but they may be required for certain features."
+            "details": "Some optional environment variables are missing, but they may be required for certain features."
         })
 
     api_key_found = os.getenv('NANO_BANANA_API_KEY') or os.getenv('GEMINI_API_KEY')
     if not api_key_found:
         logger.warning("No API key found", extra={
-            "message": "Set NANO_BANANA_API_KEY or GEMINI_API_KEY for real API access. Using mock mode."
+            "details": "Set NANO_BANANA_API_KEY or GEMINI_API_KEY for real API access. Using mock mode."
         })
 
 # Global database instance - initialize with validation
@@ -136,6 +136,7 @@ class GenerateRequest(BaseModel):
     output_path: str = Field(..., description="Output file path")
     model: str = Field("gemini-2.5-flash", pattern=r"^[a-zA-Z0-9\-_\.]+$", description="Model name")
     template_path: Optional[str] = Field(None, description="Optional template image path")
+    provider: str = Field("gemini", pattern=r"^(gemini|openrouter|requesty)$", description="AI provider to use")
 
     @field_validator('prompt')
     @classmethod
@@ -161,6 +162,7 @@ class BatchJobRequest(BaseModel):
     output_path: str = Field(..., description="Output file path")
     model: str = Field("gemini-2.5-flash", pattern=r"^[a-zA-Z0-9\-_\.]+$", description="Model name")
     template_path: Optional[str] = Field(None, description="Optional template image path")
+    provider: str = Field("gemini", pattern=r"^(gemini|openrouter|requesty)$", description="AI provider to use")
     id: Optional[str] = Field(None, description="Optional job ID")
 
     @field_validator('prompt')
@@ -210,6 +212,7 @@ async def generate_image(request: GenerateRequest, background_tasks: BackgroundT
         "output_path": request.output_path,
         "model": request.model,
         "template_path": request.template_path,
+        "provider": request.provider,
         "ip_address": client_ip
     })
     
@@ -258,12 +261,21 @@ async def batch_generate(request: BatchRequest, background_tasks: BackgroundTask
                 height=job_data.height,
                 output_path=job_data.output_path,
                 model=job_data.model,
-                template_path=job_data.template_path
+                template_path=job_data.template_path,
+                provider=job_data.provider
             )
             jobs.append(job)
 
         logger.info("Jobs validated and converted", extra={"converted_jobs": len(jobs)})
-    
+
+    except Exception as e:
+        logger.error("Failed to convert batch jobs", extra={
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "job_count": len(request.jobs)
+        })
+        raise HTTPException(status_code=400, detail=f"Invalid job data: {e}")
+
     # Create batch record
     record = BatchRecord(
         id=batch_id,
@@ -439,8 +451,8 @@ async def process_generation(generation_id: str, request: GenerateRequest):
             logger.info("Using existing template", extra={"generation_id": generation_id, "template_path": template_path})
 
         # Generate image
-        logger.info("Calling Gemini API", extra={"generation_id": generation_id})
-        generated_path, metadata = await call_gemini(template_path, request.prompt)
+        logger.info("Calling Gemini API", extra={"generation_id": generation_id, "provider": request.provider})
+        generated_path, metadata = await call_gemini(template_path, request.prompt, provider=request.provider)
 
         # Copy to output
         import shutil
